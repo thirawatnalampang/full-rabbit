@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000";
@@ -9,22 +9,44 @@ export default function AddRabbitForm() {
   const [age, setAge] = useState("");
   const [gender, setGender] = useState("male");
   const [price, setPrice] = useState("");
+  const [description, setDescription] = useState(""); // ✅ new
   const [file, setFile] = useState(null);
   const [preview, setPreview] = useState(null);
   const [submitting, setSubmitting] = useState(false);
 
   const navigate = useNavigate();
 
+  // เคลียร์ objectURL เวลา unmount หรือเปลี่ยนรูป
+  useEffect(() => {
+    return () => {
+      if (preview) URL.revokeObjectURL(preview);
+    };
+  }, [preview]);
+
   const handleImageUpload = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+
+    // (ตัวเลือก) ตรวจสอบชนิดไฟล์/ขนาด ~5MB
+    const okTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+    if (!okTypes.includes(f.type)) {
+      alert("อัปโหลดได้เฉพาะไฟล์ jpg, png, webp");
+      e.target.value = "";
+      return;
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      alert("ขนาดไฟล์ต้องไม่เกิน 5MB");
+      e.target.value = "";
+      return;
+    }
+
     setFile(f);
     setPreview(URL.createObjectURL(f));
   };
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (!name || !price) {
+    if (!name?.trim() || price === "") {
       alert("กรอกชื่อและราคา");
       return;
     }
@@ -35,7 +57,7 @@ export default function AddRabbitForm() {
       let image_url = "";
       if (file) {
         const fd = new FormData();
-        fd.append("profileImage", file);
+        fd.append("profileImage", file); // ให้ตรงกับ backend
         const up = await fetch(`${API_BASE}/api/upload`, {
           method: "POST",
           body: fd,
@@ -49,12 +71,12 @@ export default function AddRabbitForm() {
       }
 
       const payload = {
-        name,
-        breed: breed || null,
+        name: name.trim(),
+        breed: breed?.trim() || null,
         age: age ? Number(age) : null,
         gender,
         price: Number(price),
-        description: null,
+        description: description?.trim() || null, // ✅ ส่งค่าไปด้วย
         image_url,
         status: "available",
       };
@@ -87,7 +109,7 @@ export default function AddRabbitForm() {
         <form onSubmit={handleSubmit} className="space-y-6">
           {/* Upload */}
           <div className="flex justify-center">
-            <label className="cursor-pointer">
+            <label htmlFor="fileUpload" className="cursor-pointer">
               <input
                 type="file"
                 accept="image/*"
@@ -178,6 +200,18 @@ export default function AddRabbitForm() {
               type="number"
               min="0"
               required
+              className="mt-1 w-full border rounded-lg px-3 py-2 focus:ring focus:ring-green-300"
+            />
+          </div>
+
+          {/* Description ✅ */}
+          <div>
+            <label className="block font-medium">คำอธิบาย</label>
+            <textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              rows={3}
+              placeholder="รายละเอียด/นิสัย/สุขภาพ ฯลฯ"
               className="mt-1 w-full border rounded-lg px-3 py-2 focus:ring focus:ring-green-300"
             />
           </div>

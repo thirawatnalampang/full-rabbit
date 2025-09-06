@@ -29,6 +29,9 @@ import AddProductForm from './pages/AddProductForm';
 import Category from './pages/Category';
 import ManageProducts from './pages/ManageProducts';
 import EditProductForm from './pages/EditProductForm';
+import CheckoutPage from './pages/CheckoutPage';
+import MyOrdersPage from './pages/MyOrdersPage';
+import OrderDetailPage from './pages/OrderDetailPage';
 
 import './App.css';
 
@@ -67,7 +70,9 @@ function App() {
           <Route path="/category" element={<Category />} />
           <Route path="/manage-products" element={<ManageProducts />} />
           <Route path="/edit-product/:id" element={<EditProductForm />} />
-
+          <Route path="/checkout" element={<CheckoutPage />} />
+          <Route path="/my-orders" element={<MyOrdersPage />} />
+          + <Route path="/orders/:id" element={<OrderDetailPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>

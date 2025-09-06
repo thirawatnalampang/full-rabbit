@@ -1,9 +1,10 @@
+// server.js (CommonJS)
 require('dotenv').config();
 
 const express = require('express');
 const bodyParser = require('body-parser');
-const cors = require('cors'); // ✅ เพิ่ม
-const pool = require('./db'); // เชื่อมต่อฐานข้อมูล
+const cors = require('cors');
+const pool = require('./db'); // ✅ ใช้ pool จากไฟล์ db ที่คุณมีอยู่แล้ว (อย่าสร้าง Pool ซ้ำ)
 const multer = require('multer');
 const path = require('path');
 const fs = require('fs');
@@ -15,11 +16,10 @@ const port = process.env.PORT || 3000;
 
 /* ===================== Middlewares ===================== */
 app.use(bodyParser.json());
-app.use(cors({ origin: true, credentials: true })); // ✅ อนุญาตทุก origin
+app.use(cors({ origin: true, credentials: true }));
 
 /* ===================== Helpers (LOG & DIFF) ===================== */
 const nowISO = () => new Date().toISOString();
-// ฟิลด์ที่ยอมแสดงใน log (เลี่ยงข้อมูลอ่อนไหว)
 const TRACK_FIELDS = ['username', 'email', 'phone', 'address', 'gender', 'profile_image'];
 const show = (v) => {
   if (v === null || v === undefined) return 'null';
@@ -35,31 +35,45 @@ function diffUser(oldRow, newRow) {
   }
   return diffs;
 }
+const num = (v) => Number(v || 0);
 
-/* ===================== Uploads ===================== */
-const uploadDir = path.join(__dirname, 'uploads');
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+/* ===================== Static / Upload Dirs ===================== */
+const UPLOAD_ROOT = path.join(__dirname, 'uploads');
+const SLIPS_DIR = path.join(UPLOAD_ROOT, 'slips');
+if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT);
+if (!fs.existsSync(SLIPS_DIR)) fs.mkdirSync(SLIPS_DIR);
 
-const storage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, uploadDir),
+// ให้เสิร์ฟไฟล์ในโฟลเดอร์ uploads ทั้งหมด
+app.use('/uploads', express.static(UPLOAD_ROOT));
+
+/* ========== Multer storages แยกคนละตัว เพื่อไม่ชนชื่อ ========== */
+// โปรไฟล์
+const profileStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, UPLOAD_ROOT),
   filename: (_req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
 });
-const upload = multer({ storage });
+const uploadProfile = multer({ storage: profileStorage });
 
-app.use('/uploads', express.static(uploadDir));
+// สลิป
+const slipStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, SLIPS_DIR),
+  filename: (_req, file, cb) => {
+    const ext = path.extname(file.originalname || '').toLowerCase();
+    cb(null, `slip_${Date.now()}_${Math.random().toString(36).slice(2)}${ext}`);
+  },
+});
+const uploadSlip = multer({ storage: slipStorage });
 
 /* ===================== Nodemailer ===================== */
-/** ใช้ Gmail + App Password (16 ตัว) */
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
-  port: 587,       // STARTTLS
+  port: 587, // STARTTLS
   secure: false,
   auth: {
     user: process.env.MAIL_USER,
-    pass: process.env.MAIL_PASS,     // ต้องเป็น App Password 16 ตัว “ติดกันไม่มีช่องว่าง”
+    pass: process.env.MAIL_PASS, // App Password 16 ตัว
   },
 });
-
 transporter.verify((err, ok) => {
   if (err) {
     console.error('SMTP verify failed:', {
@@ -71,7 +85,6 @@ transporter.verify((err, ok) => {
 });
 
 /* ===================== OTP Store (in-memory) ===================== */
-// โครงสร้าง: { [email]: { code, expireAt, lastSentAt } }
 const otpStore = {};
 const OTP_EXPIRE_MIN = Number(process.env.OTP_EXPIRE_MIN || 10);
 const OTP_EXPIRE_MS = OTP_EXPIRE_MIN * 60 * 1000;
@@ -80,15 +93,14 @@ const genOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 const now = () => Date.now();
 const cleanupOtp = (email) => delete otpStore[email];
 
-/* ===================== Upload รูปโปรไฟล์ (อัปโหลดไฟล์) ===================== */
-app.post('/api/upload', upload.single('profileImage'), (req, res) => {
+/* ===================== Upload รูปโปรไฟล์ ===================== */
+app.post('/api/upload', uploadProfile.single('profileImage'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'ไม่มีไฟล์ถูกอัปโหลด' });
   const url = `http://localhost:${port}/uploads/${req.file.filename}`;
   res.json({ url });
 });
-/* ========= Rabbit APIs ========= */
 
-// GET list (รองรับ pagination ?page=1&limit=10)
+/* ========= Rabbit APIs ========= */
 app.get('/api/admin/rabbits', async (req, res) => {
   try {
     const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
@@ -107,23 +119,17 @@ app.get('/api/admin/rabbits', async (req, res) => {
       [limit, offset]
     );
 
-    res.json({
-      page, limit, total,
-      totalPages: Math.ceil(total / limit),
-      items: rowsQ.rows
-    });
+    res.json({ page, limit, total, totalPages: Math.ceil(total / limit), items: rowsQ.rows });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST add
 app.post('/api/admin/rabbits', async (req, res) => {
   try {
     const {
-      seller_id = null,
-      name, breed = null, age = null, gender = null,
+      seller_id = null, name, breed = null, age = null, gender = null,
       price, description = null, image_url = null, status = 'available'
     } = req.body;
 
@@ -143,14 +149,10 @@ app.post('/api/admin/rabbits', async (req, res) => {
   }
 });
 
-// PUT update
 app.put('/api/admin/rabbits/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      seller_id, name, breed, age, gender,
-      price, description, image_url, status
-    } = req.body;
+    const { seller_id, name, breed, age, gender, price, description, image_url, status } = req.body;
 
     const q = await pool.query(
       `UPDATE rabbits SET
@@ -175,7 +177,6 @@ app.put('/api/admin/rabbits/:id', async (req, res) => {
   }
 });
 
-// DELETE
 app.delete('/api/admin/rabbits/:id', async (req, res) => {
   try {
     const q = await pool.query('DELETE FROM rabbits WHERE rabbit_id = $1', [req.params.id]);
@@ -187,31 +188,24 @@ app.delete('/api/admin/rabbits/:id', async (req, res) => {
   }
 });
 
-// ================== Product APIs ==================
-
-// GET list products (รองรับ ?page ?limit ?category แบบ case-insensitive)
+/* ========= Product APIs ========= */
 app.get('/api/admin/products', async (req, res) => {
   try {
     const page   = Math.max(parseInt(req.query.page  || '1', 10), 1);
     const limit  = Math.max(parseInt(req.query.limit || '10', 10), 1);
     const offset = (page - 1) * limit;
 
-    // ทำความสะอาดพารามิเตอร์
     let category = (req.query.category ?? '').toString().trim();
-    // เผื่อคุณอยาก normalize ค่าบางกรณี (เช่น pet%20food → Pet food)
     if (category) {
       const c = category.toLowerCase();
       if (c === 'petfood' || c === 'pet_food') category = 'Pet food';
       else if (c === 'equipment' || c === 'equip') category = 'Equipment';
-      // ไม่งั้นก็ปล่อยค่าที่ส่งมาไป (และเทียบแบบ LOWER ด้านล่าง)
     } else {
       category = null;
     }
 
     let totalQ, rowsQ;
-
     if (category) {
-      // เทียบแบบ case-insensitive
       totalQ = await pool.query(
         'SELECT COUNT(*)::int AS total FROM products WHERE LOWER(category) = LOWER($1)',
         [category]
@@ -236,25 +230,17 @@ app.get('/api/admin/products', async (req, res) => {
     }
 
     const total = totalQ.rows[0].total || 0;
-    res.json({
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      items: rowsQ.rows,
-    });
+    res.json({ page, limit, total, totalPages: Math.ceil(total / limit), items: rowsQ.rows });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-// POST add product
 app.post('/api/admin/products', async (req, res) => {
   try {
     const {
-      seller_id = null,
-      name, category, price, stock = 0,
+      seller_id = null, name, category, price, stock = 0,
       description = null, image_url = null, status = 'available'
     } = req.body;
 
@@ -276,14 +262,10 @@ app.post('/api/admin/products', async (req, res) => {
   }
 });
 
-// PUT update product
 app.put('/api/admin/products/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      seller_id, name, category, price, stock,
-      description, image_url, status
-    } = req.body;
+    const { seller_id, name, category, price, stock, description, image_url, status } = req.body;
 
     const q = await pool.query(
       `UPDATE products SET
@@ -310,10 +292,7 @@ app.put('/api/admin/products/:id', async (req, res) => {
 
 app.get('/api/admin/products/:id', async (req, res) => {
   try {
-    const q = await pool.query(
-      'SELECT * FROM products WHERE product_id = $1',
-      [req.params.id]
-    );
+    const q = await pool.query('SELECT * FROM products WHERE product_id = $1', [req.params.id]);
     if (q.rowCount === 0) return res.status(404).json({ error: 'not found' });
     res.json(q.rows[0]);
   } catch (e) {
@@ -321,7 +300,6 @@ app.get('/api/admin/products/:id', async (req, res) => {
   }
 });
 
-// DELETE product
 app.delete('/api/admin/products/:id', async (req, res) => {
   try {
     const q = await pool.query('DELETE FROM products WHERE product_id = $1', [req.params.id]);
@@ -333,29 +311,23 @@ app.delete('/api/admin/products/:id', async (req, res) => {
   }
 });
 
-// (อย่าลืมส่วน listen ของแอปคุณ)
-
 /* ===================== OTP API ===================== */
-// ส่ง OTP ไปอีเมล
 app.post('/api/send-otp', async (req, res) => {
   try {
     const { email } = req.body || {};
     if (!email) return res.status(400).json({ message: 'กรุณาส่งอีเมล' });
 
-    // กันสแปม (คูลดาวน์ 60 วิ)
     const record = otpStore[email];
-    if (record && record.lastSentAt && (now() - record.lastSentAt) < OTP_COOLDOWN_MS) {
-      const waitMs = OTP_COOLDOWN_MS - (now() - record.lastSentAt);
+    if (record && record.lastSentAt && (now() - record.lastSentAt) < 60_000) {
+      const waitMs = 60_000 - (now() - record.lastSentAt);
       const waitSec = Math.ceil(waitMs / 1000);
       res.set('Retry-After', String(waitSec));
       return res.status(429).json({ message: `โปรดรอ ${waitSec} วินาที แล้วลองส่งใหม่อีกครั้ง`, retry_after: waitSec });
     }
 
-    // สร้างและเก็บ OTP
     const code = genOtp();
     otpStore[email] = { code, expireAt: now() + OTP_EXPIRE_MS, lastSentAt: now() };
 
-    // ส่งเมล
     try {
       const info = await transporter.sendMail({
         from: process.env.MAIL_FROM || process.env.MAIL_USER,
@@ -372,7 +344,6 @@ app.post('/api/send-otp', async (req, res) => {
       return res.status(500).json({ message: 'ส่ง OTP ไม่สำเร็จ' });
     }
 
-    // โหมด dev: ส่ง dev_otp กลับมาด้วยเพื่อเทสง่าย (อย่าเปิดในโปรดักชัน)
     if (process.env.NODE_ENV !== 'production') {
       return res.json({ message: 'ส่ง OTP ไปที่อีเมลแล้ว', dev_otp: otpStore[email].code });
     }
@@ -384,7 +355,6 @@ app.post('/api/send-otp', async (req, res) => {
 });
 
 /* ===================== Users ===================== */
-// ดึง users ทั้งหมด
 app.get('/api/users', async (_req, res) => {
   try {
     const result = await pool.query('SELECT * FROM users ORDER BY user_id ASC');
@@ -395,7 +365,6 @@ app.get('/api/users', async (_req, res) => {
   }
 });
 
-// ดึง user ตาม id
 app.get('/api/users/:id', async (req, res) => {
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: 'Invalid user ID' });
@@ -410,35 +379,27 @@ app.get('/api/users/:id', async (req, res) => {
   }
 });
 
-// helper ไว้พิมพ์เวลา (สำหรับ log register/login ด้านล่าง)
 const nowISO_log = () => new Date().toISOString();
 
-/* ===================== REGISTER ===================== */
 app.post('/api/register', async (req, res) => {
   try {
     const { username, password, email, otp } = req.body;
-
-    // Log ข้อมูลที่ส่งมา (ไม่เก็บ password/otp)
     console.log(`[REGISTER ATTEMPT] username:${username}, email:${email}, time:${nowISO_log()}`);
 
     if (!username || !password || !email || !otp) {
       return res.status(400).json({ message: 'กรุณากรอก username, password, email และ otp ให้ครบ' });
     }
 
-    // ตรวจ OTP
     const record = otpStore[email];
     if (!record) return res.status(400).json({ message: 'ยังไม่ได้ส่ง OTP หรือ OTP หมดอายุ' });
     if (now() > record.expireAt) { cleanupOtp(email); return res.status(400).json({ message: 'OTP หมดอายุ กรุณาขอรหัสใหม่' }); }
     if (String(otp) !== String(record.code)) return res.status(400).json({ message: 'OTP ไม่ถูกต้อง' });
 
-    // ตรวจซ้ำ
     const existing = await pool.query('SELECT 1 FROM users WHERE username=$1 OR email=$2', [username, email]);
     if (existing.rows.length > 0) return res.status(400).json({ message: 'ชื่อผู้ใช้หรืออีเมลนี้ถูกใช้แล้ว' });
 
-    // แฮชรหัสผ่าน
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // บันทึก user
     const result = await pool.query(
       `INSERT INTO users (username, password, email, phone, address, gender, role, profile_image, email_verified)
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
@@ -458,11 +419,9 @@ app.post('/api/register', async (req, res) => {
   }
 });
 
-/* ===================== LOGIN ===================== */
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-
     console.log(`[LOGIN ATTEMPT] username:${username}, time:${nowISO_log()}`);
 
     if (!username || !password) {
@@ -478,13 +437,11 @@ app.post('/api/login', async (req, res) => {
 
     const user = userResult.rows[0];
 
-    // ผู้ใช้ทั่วไปต้องยืนยันอีเมลก่อน (admin ข้ามได้)
     if (user.role !== 'admin' && user.email_verified === false) {
       console.log(`[LOGIN FAIL] username:${username}, user_id:${user.user_id}, reason:email_not_verified, time:${nowISO_log()}`);
       return res.status(403).json({ message: 'กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ' });
     }
 
-    // ตรวจรหัสผ่าน (admin รองรับ plain-text เก่า + bcrypt)
     let match = false;
     if (user.role === 'admin') {
       match = password === user.password || await bcrypt.compare(password, user.password);
@@ -517,13 +474,11 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
-/* ===================== UPDATE PROFILE (with DIFF LOG) ===================== */
 app.put('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   const { username, email, phone, address, gender, profileImage } = req.body;
 
   try {
-    // ดึงของเดิมมาเพื่อเทียบ diff
     const beforeRes = await pool.query('SELECT * FROM users WHERE user_id = $1', [id]);
     if (beforeRes.rows.length === 0) {
       console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:not_found, time:${nowISO()}`);
@@ -540,8 +495,6 @@ app.put('/api/users/:id', async (req, res) => {
     );
 
     const after = result.rows[0];
-
-    // สร้างบรรทัด log แสดง field ที่เปลี่ยน และค่าใหม่
     const changes = diffUser(before, after);
     if (changes.length === 0) {
       console.log(`[PROFILE UPDATE] user_id:${id}, changed:none, time:${nowISO()}`);
@@ -558,7 +511,6 @@ app.put('/api/users/:id', async (req, res) => {
   }
 });
 
-/* ===================== UPDATE PROFILE IMAGE (LOG) ===================== */
 app.post('/api/users/:id/profile-image', async (req, res) => {
   const { id } = req.params;
   const { profileImage } = req.body;
@@ -594,7 +546,6 @@ app.post('/api/users/:id/profile-image', async (req, res) => {
   }
 });
 
-/* ===================== Delete user ===================== */
 app.delete('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -607,7 +558,392 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
-/* ===================== Start server ===================== */
-app.listen(port, () => {
-  console.log(`🐰 Server running at http://localhost:${port}`);
+/* =============== สั่งซื้อ: POST /api/orders =============== */
+app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    let body;
+    let slipPath = null;
+
+    if (req.is('multipart/form-data')) {
+      if (!req.body?.order) return res.status(400).json({ message: "missing 'order' json" });
+      body = JSON.parse(req.body.order);
+      if (!req.file) return res.status(400).json({ message: 'ต้องแนบไฟล์สลิป (field: slip)' });
+      slipPath = `/uploads/slips/${req.file.filename}`;
+    } else if (req.is('application/json')) {
+      body = req.body;
+    } else {
+      return res.status(415).json({ message: 'Unsupported Content-Type' });
+    }
+
+    const { user_id, contact, shipping, payment, note, items = [], summary } = body || {};
+    if (!contact?.full_name || !contact?.phone) return res.status(400).json({ message: 'กรอกชื่อ/เบอร์ให้ครบ' });
+    if (!shipping?.method) return res.status(400).json({ message: 'ระบุ shipping.method' });
+    if (!payment?.method) return res.status(400).json({ message: 'ระบุ payment.method' });
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'ไม่มีสินค้า' });
+
+    const subtotal = num(summary?.subtotal);
+    const discount = num(summary?.discount);
+    const shippingFee = num(shipping?.fee);
+    const total = num(summary?.total);
+    const currency = summary?.currency || 'THB';
+    const paymentStatus = payment?.status || (slipPath ? 'submitted' : 'unpaid');
+
+    await client.query('BEGIN');
+
+    const insertOrderSql = `
+      INSERT INTO orders (
+        buyer_id, order_date,
+        total_amount, status,
+        contact_full_name, contact_phone,
+        shipping_method, shipping_address, shipping_fee,
+        payment_method, payment_status, payment_slip_path,
+        note, subtotal, discount, currency
+      ) VALUES (
+        $1, NOW(),
+        $2, 'pending',
+        $3, $4,
+        $5, $6, $7,
+        $8, $9, $10,
+        $11, $12, $13, $14
+      )
+      RETURNING order_id
+    `;
+    const insertOrderVals = [
+      user_id ?? null,
+      total,
+      contact.full_name,
+      contact.phone,
+      shipping.method,
+      shipping.address ? JSON.stringify(shipping.address) : null,
+      shippingFee,
+      payment.method,
+      paymentStatus,
+      slipPath,
+      note || null,
+      subtotal,
+      discount,
+      currency,
+    ];
+    const { rows } = await client.query(insertOrderSql, insertOrderVals);
+    const orderId = rows[0].order_id;
+
+    const insertDetailSql = `
+      INSERT INTO order_details (order_id, item_type, item_id, quantity, price)
+      VALUES ($1, $2, $3, $4, $5)
+    `;
+    for (const it of items) {
+      const itemId = Number(it.base_id ?? it.id);
+      await client.query(insertDetailSql, [
+        orderId,
+        String(it.type || '').toLowerCase(),
+        Number.isFinite(itemId) ? itemId : null,
+        Number(it.qty || 1),
+        num(it.unit_price || 0),
+      ]);
+    }
+
+    await client.query('COMMIT');
+    res.json({ status: 'ok', order_id: orderId, total_amount: total, currency });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('create order error:', err);
+    res.status(500).json({ message: 'create order failed' });
+  } finally {
+    client.release();
+  }
 });
+
+
+
+/* ========= Helpers ========== */
+function normalizeType(raw) {
+  const t = String(raw || '').toLowerCase().trim();
+  if (t === 'pet_food' || t === 'petfood') return 'pet-food';
+  if (t === 'equipment' || t === 'equip') return 'equipment';
+  if (t === 'rabbit' || t === 'rabbits') return 'rabbit';
+  return t || 'unknown';
+}
+function genOrderCode() {
+  const datePart = new Date().toISOString().slice(0,10).replace(/-/g, '');
+  const rand4 = Math.floor(1000 + Math.random() * 9000);
+  return `ORD-${datePart}-${rand4}`;
+}
+
+/* ========= สั่งซื้อ: POST /api/orders ========= */
+app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    let body; let slipPath = null;
+
+    if (req.is('multipart/form-data')) {
+      if (!req.body?.order) return res.status(400).json({ message: "missing 'order' json" });
+      body = JSON.parse(req.body.order);
+      if (!req.file) return res.status(400).json({ message: 'ต้องแนบไฟล์สลิป (field: slip)' });
+      slipPath = `/uploads/slips/${req.file.filename}`;
+    } else if (req.is('application/json')) {
+      body = req.body;
+    } else {
+      return res.status(415).json({ message: 'Unsupported Content-Type' });
+    }
+
+    const { user_id, contact, shipping, payment, note, items = [], summary } = body || {};
+    if (!contact?.full_name || !contact?.phone) return res.status(400).json({ message: 'กรอกชื่อ/เบอร์ให้ครบ' });
+    if (!shipping?.method) return res.status(400).json({ message: 'ระบุ shipping.method' });
+    if (!payment?.method) return res.status(400).json({ message: 'ระบุ payment.method' });
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'ไม่มีสินค้า' });
+
+    const subtotal    = Number(summary?.subtotal || 0);
+    const discount    = Number(summary?.discount || 0);
+    const shippingFee = Number(shipping?.fee || 0);
+    const total       = Number(summary?.total || 0);
+    const currency    = summary?.currency || 'THB';
+    const paymentStatus = payment?.status || (slipPath ? 'submitted' : 'unpaid');
+    const orderCode = genOrderCode();
+
+    await client.query('BEGIN');
+
+    const head = await client.query(
+      `INSERT INTO orders (
+        order_code, buyer_id, order_date, total_amount, status,
+        contact_full_name, contact_phone,
+        shipping_method, shipping_address, shipping_fee,
+        payment_method, payment_status, payment_slip_path,
+        note, subtotal, discount, currency
+      ) VALUES ($1,$2,NOW(),$3,'pending',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+      RETURNING order_id, order_code`,
+      [
+        orderCode,
+        user_id ?? null,
+        total,
+        contact.full_name,
+        contact.phone,
+        shipping.method,
+        shipping.address ? JSON.stringify(shipping.address) : null,
+        shippingFee,
+        payment.method,
+        paymentStatus,
+        slipPath,
+        note || null,
+        subtotal,
+        discount,
+        currency,
+      ]
+    );
+    const orderId = head.rows[0].order_id;
+
+    const insertDetail = `
+      INSERT INTO order_details (order_id, item_type, item_id, quantity, price)
+      VALUES ($1,$2,$3,$4,$5)
+    `;
+
+    for (const raw of items) {
+  const itemType = normalizeType(raw.type);
+
+  let itemIdRaw;
+  if (itemType === 'rabbit') {
+    itemIdRaw = raw.rabbit_id ?? raw.base_id ?? raw.id;
+  } else {
+    itemIdRaw = raw.product_id ?? raw.base_id ?? raw.id;
+  }
+
+  if (itemIdRaw == null) {
+    await client.query('ROLLBACK');
+    return res.status(400).json({ message: 'missing item_id in order items', item: raw });
+  }
+
+  const itemId = Number(itemIdRaw);
+
+  if (!['rabbit','pet-food','equipment'].includes(itemType)) {
+    await client.query('ROLLBACK');
+    return res.status(400).json({ message: 'invalid item_type', item: raw });
+  }
+
+  if (!Number.isInteger(itemId) || itemId <= 0) {
+    await client.query('ROLLBACK');
+    console.warn('Bad item id', { itemType, itemIdRaw, raw }); // <-- log ชัด ๆ
+    return res.status(400).json({ message: 'invalid item_id in order items', item: raw });
+  }
+
+  await client.query(insertDetail, [
+    orderId,
+    itemType,
+    itemId,
+    Number(raw.qty || 1),
+    Number(raw.unit_price || 0),
+  ]);
+}
+
+
+    await client.query('COMMIT');
+    res.json({ status: 'ok', order_id: orderId, order_code: head.rows[0].order_code, total_amount: total, currency });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('create order error:', err);
+    res.status(500).json({ message: 'create order failed' });
+  } finally {
+    client.release();
+  }
+});
+
+/* ========= My Orders (รวมสินค้าทั้งหมด) ========= */
+app.get('/api/my-orders', async (req, res) => {
+  try {
+    const buyerId = Number(req.query.buyer_id);
+    if (!Number.isFinite(buyerId)) return res.status(400).json({ message: 'invalid buyer_id' });
+
+    const q = await pool.query(
+      `
+      SELECT
+        o.order_id, o.order_date, o.total_amount, o.status,
+        o.payment_status, o.payment_method,
+        COALESCE(SUM(od.quantity),0)::int AS total_items,
+        json_agg(
+  json_build_object(
+    'order_detail_id', od.order_detail_id,
+    'item_type', od.item_type,
+    'item_name', COALESCE(r.name, p.name),
+    'item_image',
+      CASE
+        WHEN od.item_type='rabbit' THEN r.image_url
+        ELSE p.image_url
+      END,
+    'quantity', od.quantity,
+    'price', od.price
+  )
+  ORDER BY od.order_detail_id
+) AS items
+      FROM orders o
+      LEFT JOIN order_details od ON od.order_id = o.order_id
+      LEFT JOIN rabbits  r ON od.item_type='rabbit' AND r.rabbit_id  = od.item_id
+      LEFT JOIN products p ON od.item_type IN ('pet-food','equipment') AND p.product_id = od.item_id
+      WHERE o.buyer_id = $1
+      GROUP BY o.order_id
+      ORDER BY o.order_date DESC
+      `,
+      [buyerId]
+    );
+
+    res.json(q.rows);
+  } catch (err) {
+    console.error('my-orders error:', err);
+    res.status(500).json({ message: 'server error' });
+  }
+});
+
+/* ========= รายละเอียดคำสั่งซื้อ ========= */
+app.get('/api/orders/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ message: 'invalid id' });
+    const head = await pool.query(
+      `SELECT o.order_id, o.order_code, o.buyer_id, o.order_date, o.total_amount, o.currency,
+              o.status, o.payment_status, o.payment_method,
+              o.contact_full_name, o.contact_phone,
+              o.shipping_method, o.shipping_address, o.shipping_fee,
+              o.subtotal, o.discount, o.note
+       FROM orders o WHERE o.order_id=$1`, [id]);
+    if (!head.rowCount) return res.status(404).json({ message: 'not found' });
+    const items = await pool.query(
+      `SELECT od.order_detail_id, od.item_type, od.item_id, od.quantity, od.price,
+              (od.quantity*od.price) AS line_total
+       FROM order_details od WHERE od.order_id=$1 ORDER BY od.order_detail_id ASC`, [id]);
+    res.json({ order: head.rows[0], items: items.rows });
+  } catch (err) { console.error('order detail error:', err); res.status(500).json({ message: 'server error' }); }
+});
+/* ========= Admin: รวมรายการ + ชื่อ/รูป ========= */
+app.get('/api/admin/orders', async (_req, res) => {
+  try {
+    const q = await pool.query(
+      `SELECT
+         o.*,
+         json_agg(
+           json_build_object(
+             'order_detail_id', od.order_detail_id,
+             'item_type',       od.item_type,
+             'item_id',         od.item_id,
+             'quantity',        od.quantity,
+             'price',           od.price,
+             'item_name',
+               CASE
+                 WHEN od.item_type = 'rabbit' THEN r.name
+                 WHEN od.item_type IN ('pet-food','equipment') THEN p.name
+                 ELSE NULL
+               END,
+             'item_image',
+               CASE
+                 WHEN od.item_type = 'rabbit' THEN r.image_url
+                 WHEN od.item_type IN ('pet-food','equipment') THEN p.image_url
+                 ELSE NULL
+               END
+           )
+         ) AS items
+       FROM orders o
+       LEFT JOIN order_details od
+         ON o.order_id = od.order_id
+       LEFT JOIN rabbits r
+         ON od.item_type = 'rabbit' AND r.rabbit_id = od.item_id
+       LEFT JOIN products p
+         ON od.item_type IN ('pet-food','equipment') AND p.product_id = od.item_id
+       GROUP BY o.order_id
+       ORDER BY o.order_date DESC`
+    );
+    res.json(q.rows);
+  } catch (err) {
+    console.error('fetch admin orders error:', err);
+    res.status(500).json({ message: 'failed to fetch orders' });
+  }
+});
+/* ========= Admin: อัปเดตสถานะ & เลขพัสดุ ========= */
+app.put('/api/admin/orders/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status, tracking } = req.body;
+
+    // ดึงข้อมูล order เดิมมาก่อน
+    const cur = await pool.query(`SELECT payment_method, payment_status FROM orders WHERE order_id=$1`, [id]);
+    if (!cur.rowCount) return res.status(404).json({ message: 'not found' });
+
+    let newPayStatus = cur.rows[0].payment_status;
+
+    // ถ้า COD และกดเป็น done → เปลี่ยนเป็น paid อัตโนมัติ
+    if (cur.rows[0].payment_method === 'cod' && status === 'done') {
+      newPayStatus = 'paid';
+    }
+
+    const q = await pool.query(
+      `UPDATE orders 
+       SET status = COALESCE($1,status),
+           tracking_number = COALESCE($2,tracking_number),
+           payment_status = $3
+       WHERE order_id=$4
+       RETURNING *`,
+      [status ?? null, tracking ?? null, newPayStatus, id]
+    );
+
+    res.json(q.rows[0]);
+  } catch (err) {
+    console.error('update order error:', err);
+    res.status(500).json({ message: 'failed to update order' });
+  }
+});
+
+/* ========= Admin: อนุมัติ/ปฏิเสธสลิป ========= */
+app.put('/api/admin/orders/:id/payment', async (req, res) => {
+  try {
+    const { id } = req.params; const { action } = req.body; // 'approve'|'reject'
+    if (!['approve','reject'].includes(action)) return res.status(400).json({ message: "action must be 'approve' or 'reject'" });
+    const newStatus = action === 'approve' ? 'paid' : 'rejected';
+    const q = await pool.query(
+      `UPDATE orders SET payment_status=$1 WHERE order_id=$2 RETURNING *`, [newStatus, id]
+    );
+    if (!q.rowCount) return res.status(404).json({ message: 'not found' });
+    res.json(q.rows[0]);
+  } catch (err) { console.error('payment update error:', err); res.status(500).json({ message: 'failed to update payment' }); }
+});
+
+/* ===================== Health ===================== */
+app.get('/', (_req,res)=>res.send('OK'));
+
+/* ===================== Start server ===================== */
+app.listen(port, ()=>console.log(`🐰 Server running at http://localhost:${port}`));
