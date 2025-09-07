@@ -984,5 +984,230 @@ app.get('/api/search', async (req, res) => {
     res.status(500).json({ message: 'search error' });
   }
 });
+// ===== Dev-only guards (ง่าย เร็ว ใช้ชั่วคราว) =====
+function auth(req, res, next) {
+  // dev: ให้ผ่านหมด และผูก user ให้มี role=admin โดยอัตโนมัติ
+  // ถ้าอยากทดสอบสิทธิ์ ให้ส่ง header x-role: admin หรือ x-role: user
+  const role = (req.headers['x-role'] || 'admin').toLowerCase();
+  req.user = { role };
+  next();
+}
+
+function isAdmin(req, res, next) {
+  if (req.user?.role === 'admin') return next();
+  return res.status(403).json({ message: 'forbidden: admin only' });
+}
+
+// ====== /api/admin/dashboard/stats (ADMIN ONLY) ======
+app.get('/api/admin/dashboard/stats', auth, isAdmin, async (req, res) => {
+  const client = await pool.connect();
+  try {
+    // รับช่วงวันที่ (optional) เช่น ?start=2025-09-01&end=2025-09-07
+    // ถ้าไม่ส่งมา จะยึด today / this month / last 7 days ตาม logic เดิม
+    const { start, end } = req.query; // ISO yyyy-mm-dd
+
+    // ตรวจ schema ของ order_details เพื่อให้ query topProducts ไม่พัง
+    const colsRes = await client.query(`
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_name = 'order_details'
+    `);
+    const cols = colsRes.rows.map(r => r.column_name);
+    const findCol = (cands) => cands.find(c => cols.includes(c));
+
+    const OD_PRODUCT_COL = findCol(['product_id', 'productid', 'product', 'prod_id']);
+    const OD_QTY_COL     = findCol(['qty', 'quantity', 'qty_qty']);
+    const OD_PRICE_COL   = findCol(['price', 'unit_price', 'sale_price']);
+    const canTopProducts = !!OD_PRODUCT_COL;
+
+    // helper สำหรับช่วง 7 วัน (อิง end หรือวันนี้)
+    const sevenEnd  = end ? `DATE '${end}'` : `NOW()::date`;
+    const sevenFrom = end ? `DATE '${end}' - INTERVAL '6 days'` : `NOW()::date - INTERVAL '6 days'`;
+
+    // เงื่อนไขช่วงเวลา (month / today) จะใช้ค่าปริยายถ้าไม่ส่ง start/end
+    const todayCond = start && end
+      ? `(order_date)::date BETWEEN DATE '${start}' AND DATE '${end}'`
+      : `(order_date)::date = (NOW())::date`;
+
+    const monthCond = start && end
+      ? `date_trunc('month', order_date) = date_trunc('month', DATE '${start}')`
+      : `date_trunc('month', order_date) = date_trunc('month', NOW())`;
+
+    const [
+      salesTodayQ,
+      salesMonthQ,
+      ordersTodayQ,
+      ordersMonthQ,
+      invQ,
+      rabbitsQ,
+      sales7DaysQ,
+      recentOrdersQ,
+      topProductsQ,
+    ] = await Promise.all([
+      // ยอดขาย (วันนี้หรือช่วงที่ส่งมา)
+      client.query(`
+        SELECT COALESCE(SUM(total_amount),0)::numeric AS total
+        FROM orders
+        WHERE ${todayCond}
+          AND status IN ('done','shipped','ready_to_ship')
+      `),
+
+      // ยอดขายเดือนนี้ (หรือเดือนของ start ถ้ามี)
+      client.query(`
+        SELECT COALESCE(SUM(total_amount),0)::numeric AS total
+        FROM orders
+        WHERE ${monthCond}
+          AND status IN ('done','shipped','ready_to_ship')
+      `),
+
+      // จำนวนออเดอร์ (วันนี้หรือช่วงที่ส่งมา)
+      client.query(`
+        SELECT COUNT(*)::int AS cnt
+        FROM orders
+        WHERE ${todayCond}
+      `),
+
+      // จำนวนออเดอร์เดือนนี้ (หรือเดือนของ start)
+      client.query(`
+        SELECT COUNT(*)::int AS cnt
+        FROM orders
+        WHERE ${monthCond}
+      `),
+
+      // จำนวนสินค้า + ใกล้หมด
+      client.query(`
+        SELECT
+          COUNT(*)::int AS total_products,
+          COUNT(*) FILTER (WHERE stock IS NOT NULL AND stock <= 5)::int AS low_stock
+        FROM products
+      `),
+
+      // นับกระต่าย (มีตารางค่อยนับ)
+      client.query(`
+        SELECT COALESCE(
+          (SELECT COUNT(*)::int FROM information_schema.tables WHERE table_name='rabbits'),
+          0
+        ) AS has_rabbits;
+      `).then(async r => {
+        const has = Number(r.rows?.[0]?.has_rabbits || 0) > 0;
+        if (!has) return { rows: [{ total_rabbits: 0 }] };
+        const rr = await client.query(`SELECT COUNT(*)::int AS total_rabbits FROM rabbits`);
+        return rr;
+      }),
+
+      // กราฟ 7 วันล่าสุด (อิง end หรือวันนี้)
+      client.query(`
+        WITH days AS (
+          SELECT generate_series(
+            (${sevenFrom}),
+            (${sevenEnd}),
+            INTERVAL '1 day'
+          )::date AS d
+        )
+        SELECT
+          d::text AS date,
+          COALESCE(SUM(o.total_amount),0)::numeric AS total
+        FROM days
+        LEFT JOIN orders o
+          ON (o.order_date)::date = d
+          AND o.status IN ('done','shipped','ready_to_ship')
+        GROUP BY d
+        ORDER BY d
+      `),
+
+      // ออเดอร์ล่าสุด 8 รายการ (โชว์ชื่อจาก contact_full_name)
+      client.query(`
+        SELECT
+          o.order_id,
+          o.order_date,
+          o.status,
+          o.payment_status,
+          o.total_amount,
+          COALESCE(o.contact_full_name, 'ผู้ใช้ #' || o.buyer_id::text) AS buyer_name
+        FROM orders o
+        ORDER BY o.order_date DESC
+        LIMIT 8
+      `),
+
+      // Top 5 สินค้าขายดี (30 วันล่าสุดจาก end)
+      (async () => {
+        if (!canTopProducts) return { rows: [] };
+        const QTY_EXPR   = OD_QTY_COL   ? `od.${OD_QTY_COL}`   : `1`;
+        const PRICE_EXPR = OD_PRICE_COL ? `od.${OD_PRICE_COL}` : `p.price`;
+        const sinceExpr  = end ? `DATE '${end}' - INTERVAL '30 days'` : `NOW() - INTERVAL '30 days'`;
+        const untilExpr  = end ? `DATE '${end}' + INTERVAL '1 day'`   : `NOW()`;
+
+        const sql = `
+          SELECT
+            p.product_id AS product_id,
+            COALESCE(p.name, p.product_name, p.title, 'ไม่ระบุชื่อ') AS product_name,
+            SUM(${QTY_EXPR})::int AS sold_qty,
+            SUM( (${QTY_EXPR}) * ${PRICE_EXPR} )::numeric AS revenue
+          FROM orders o
+          JOIN order_details od ON od.order_id = o.order_id
+          JOIN products p       ON p.product_id = od.${OD_PRODUCT_COL}
+          WHERE o.order_date >= (${sinceExpr})
+            AND o.order_date <  (${untilExpr})
+            AND o.status IN ('done','shipped','ready_to_ship')
+          GROUP BY p.product_id, product_name
+          ORDER BY sold_qty DESC
+          LIMIT 5
+        `;
+        return client.query(sql);
+      })(),
+    ]);
+
+    // รวมผลลัพธ์
+    const salesToday   = Number(salesTodayQ.rows[0]?.total || 0);
+    const salesMonth   = Number(salesMonthQ.rows[0]?.total || 0);
+    const ordersToday  = Number(ordersTodayQ.rows[0]?.cnt || 0);
+    const ordersMonth  = Number(ordersMonthQ.rows[0]?.cnt || 0);
+    const totalProducts= Number(invQ.rows[0]?.total_products || 0);
+    const lowStock     = Number(invQ.rows[0]?.low_stock || 0);
+    const totalRabbits = Number(rabbitsQ.rows[0]?.total_rabbits || 0);
+
+    const salesByDay   = sales7DaysQ.rows.map(r => ({
+      date: r.date,
+      total: Number(r.total || 0),
+    }));
+
+    const recentOrders = recentOrdersQ.rows.map(r => ({
+      order_id: r.order_id,
+      order_date: r.order_date,
+      status: r.status,
+      payment_status: r.payment_status,
+      total_amount: Number(r.total_amount || 0),
+      buyer_name: r.buyer_name || '—',
+    }));
+
+    const topProducts = (topProductsQ.rows || []).map(r => ({
+      product_id: r.product_id,
+      name: r.product_name,
+      sold_qty: Number(r.sold_qty || 0),
+      revenue: Number(r.revenue || 0),
+    }));
+
+    res.json({
+      stats: {
+        salesToday,
+        salesMonth,
+        ordersToday,
+        ordersMonth,
+        totalProducts,
+        lowStock,
+        totalRabbits,
+      },
+      salesByDay,
+      recentOrders,
+      topProducts,
+    });
+  } catch (err) {
+    console.error('admin/dashboard/stats error:', err);
+    res.status(500).json({ message: 'failed to load dashboard', error: String(err?.message || err) });
+  } finally {
+    client.release();
+  }
+});
+
 /* ===================== Start server ===================== */
 app.listen(port, ()=>console.log(`🐰 Server running at http://localhost:${port}`));
