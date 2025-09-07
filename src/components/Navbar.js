@@ -25,10 +25,14 @@ export default function Navbar() {
   useEffect(() => { setShowMobileSearch(false); }, [location.pathname]);
 
   const handleSearch = () => {
-    const q = searchQuery.trim();
-    if (q) navigate(`/search?query=${encodeURIComponent(q)}`);
-  };
-
+  const q = searchQuery.trim();
+  if (!q) {
+    navigate('/search');                  // ไม่มีคำค้น → ไปหน้า search เปล่า
+  } else {
+    navigate(`/search?q=${encodeURIComponent(q)}`);  // ✅ ใช้ q แทน query
+  }
+  setShowMobileSearch(false);             // ปิดแผงค้นหาในมือถือหลังค้นหา
+};
   return (
     <>
       {/* ===== Desktop / Tablet แนวนอน (คงเดิม) ===== */}

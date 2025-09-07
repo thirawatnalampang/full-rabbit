@@ -944,6 +944,45 @@ app.put('/api/admin/orders/:id/payment', async (req, res) => {
 
 /* ===================== Health ===================== */
 app.get('/', (_req,res)=>res.send('OK'));
+// /api/search — เวอร์ชัน ILIKE อย่างเดียว (กันตาย)
+app.get('/api/search', async (req, res) => {
+  const q = (req.query.q || '').trim();
+  if (!q) return res.json([]);
 
+  const like = `%${q}%`;
+
+  const sql = `
+    WITH
+    p AS (
+      SELECT product_id AS id, name,
+             COALESCE(description,'') AS description,
+             COALESCE(image_url,'')   AS image_url,
+             COALESCE(price,0)        AS price,
+             'product' AS kind
+      FROM products
+      WHERE name ILIKE $1 OR description ILIKE $1
+    ),
+    r AS (
+      SELECT rabbit_id AS id, name,
+             CONCAT('สายพันธุ์ ', COALESCE(breed,'')) AS description,
+             COALESCE(image_url,'') AS image_url,
+             COALESCE(price,0)      AS price,
+             'rabbit' AS kind
+      FROM rabbits
+      WHERE name ILIKE $1 OR breed ILIKE $1
+    )
+    SELECT * FROM (SELECT * FROM p UNION ALL SELECT * FROM r) t
+    ORDER BY name ASC
+    LIMIT 50;
+  `;
+
+  try {
+    const { rows } = await pool.query(sql, [like]);
+    res.json(rows);
+  } catch (e) {
+    console.error('search error:', e);
+    res.status(500).json({ message: 'search error' });
+  }
+});
 /* ===================== Start server ===================== */
 app.listen(port, ()=>console.log(`🐰 Server running at http://localhost:${port}`));
