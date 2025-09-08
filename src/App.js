@@ -9,7 +9,7 @@ import CartPage from './pages/CartPage';
 import LoginPage from './pages/LoginPage';
 import RegisterPage from './pages/RegisterPage';
 import ProfilePage from './pages/ProfilePage';
-import GetStartedPage from './pages/GetStartedPage';
+import GetStartedPage from './pages/ProtectedRoute';
 import NotFound from './pages/NotFound';
 import Food from './pages/Food';
 import Equipment from './pages/Equipment';
@@ -72,7 +72,7 @@ function App() {
           <Route path="/edit-product/:id" element={<EditProductForm />} />
           <Route path="/checkout" element={<CheckoutPage />} />
           <Route path="/my-orders" element={<MyOrdersPage />} />
-          + <Route path="/orders/:id" element={<OrderDetailPage />} />
+          <Route path="/orders/:id" element={<OrderDetailPage />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </div>
