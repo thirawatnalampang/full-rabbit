@@ -20,12 +20,31 @@ const PAY_LABELS = {
 };
 const FALLBACK_IMG = "https://placehold.co/64x64?text=IMG";
 
+// รายชื่อขนส่งยอดนิยม
+const CARRIERS = [
+  { key: "", label: "— เลือกขนส่ง —" },
+  { key: "thailand_post", label: "Thailand Post" },
+  { key: "kerry", label: "Kerry" },
+  { key: "jnt", label: "J&T" },
+  { key: "flash", label: "Flash" },
+];
+
+// สร้างลิงก์ติดตามตาม Carrier
+const trackingUrl = (carrier, code) => {
+  if (!code) return null;
+  const c = String(carrier || "").toLowerCase();
+  const q = encodeURIComponent(code);
+  if (c.includes("kerry")) return `https://th.kerryexpress.com/th/track/?track=${q}`;
+  if (c.includes("thai") || c.includes("ems")) return `https://track.thailandpost.co.th/?trackNumber=${q}`;
+  if (c.includes("j&t") || c.includes("jnt")) return `https://www.jtexpress.co.th/index/query/gzquery.html?billcode=${q}`;
+  if (c.includes("flash")) return `https://www.flashexpress.com/fle/tracking?se=${q}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(`${carrier || ""} ${code}`)}`;
+};
+
 export default function ManageOrdersPage() {
   const [orders, setOrders] = useState([]);
   const [loading, setLoading] = useState(true);
-
-  // slipPreview = { url, orderId } | null
-  const [slipPreview, setSlipPreview] = useState(null);
+  const [slipPreview, setSlipPreview] = useState(null); // { url, orderId } | null
 
   async function fetchOrders() {
     try {
@@ -39,12 +58,13 @@ export default function ManageOrdersPage() {
     }
   }
 
-  async function saveStatus(orderId, status, tracking) {
+  // ⛳️ บันทึกสถานะ/ขนส่ง/เลขพัสดุ (ใช้ฟิลด์ใหม่)
+  async function saveStatus(orderId, status, carrier, tracking_code) {
     try {
       await fetch(`${API_BASE}/api/admin/orders/${orderId}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status, tracking }),
+        body: JSON.stringify({ status, carrier, tracking_code }),
       });
       fetchOrders();
     } catch (e) {
@@ -97,10 +117,18 @@ export default function ManageOrdersPage() {
                       <span className={badgeClassByStatus(o.status)}>
                         {STATUS_LABELS[o.status] || o.status}
                       </span>
-                      {o.tracking_number && (
-                        <span className="px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200">
-                          📦 {o.tracking_number}
-                        </span>
+
+                      {/* ✅ ใช้ฟิลด์ใหม่ carrier + tracking_code */}
+                      {o.tracking_code && (
+                        <a
+                          className="px-2 py-0.5 rounded bg-sky-50 text-sky-700 border border-sky-200"
+                          href={trackingUrl(o.carrier, o.tracking_code)}
+                          target="_blank"
+                          rel="noreferrer"
+                          title="ดูสถานะพัสดุ"
+                        >
+                          📦 {o.carrier ? `${o.carrier} • ` : ""}{o.tracking_code}
+                        </a>
                       )}
                     </div>
 
@@ -113,7 +141,6 @@ export default function ManageOrdersPage() {
                         วิธี: {o.payment_method === "cod" ? "เก็บเงินปลายทาง (COD)" : "โอน/พร้อมเพย์"}
                       </span>
 
-                      {/* ดูสลิป (โชว์เมื่อมี path) */}
                       {o.payment_slip_path && (
                         <button
                           onClick={() =>
@@ -125,7 +152,6 @@ export default function ManageOrdersPage() {
                         </button>
                       )}
 
-                      {/* ปุ่มอนุมัติ/ปฏิเสธ: เฉพาะ non-COD และสถานะ submitted */}
                       {o.payment_method !== "cod" && o.payment_status === "submitted" && (
                         <>
                           <button
@@ -176,31 +202,41 @@ export default function ManageOrdersPage() {
                 ))}
               </div>
 
-              {/* ควบคุมสถานะ/เลขพัสดุ + ปุ่มบันทึก/สำเร็จ */}
+              {/* ควบคุมสถานะ/ขนส่ง/เลขพัสดุ */}
               <div className="mt-3 flex flex-col md:flex-row gap-2">
-                <select
-                  defaultValue={o.status}
-                  id={`status-${o.order_id}`}
-                  className="border rounded px-3 py-2"
-                >
+                <select defaultValue={o.status} id={`status-${o.order_id}`} className="border rounded px-3 py-2">
                   {Object.keys(STATUS_LABELS).map((s) => (
                     <option key={s} value={s}>{STATUS_LABELS[s]}</option>
                   ))}
                 </select>
 
+                {/* ✅ carrier */}
+                <select
+                  defaultValue={o.carrier || ""}
+                  id={`carrier-${o.order_id}`}
+                  className="border rounded px-3 py-2"
+                  title="บริษัทขนส่ง"
+                >
+                  {CARRIERS.map(c => (
+                    <option key={c.key} value={c.key}>{c.label}</option>
+                  ))}
+                </select>
+
+                {/* ✅ tracking_code */}
                 <input
                   type="text"
                   id={`track-${o.order_id}`}
                   className="border rounded px-3 py-2 flex-1"
                   placeholder="เลขพัสดุ"
-                  defaultValue={o.tracking_number || ""}
+                  defaultValue={o.tracking_code || ""}
                 />
 
                 <button
                   onClick={() => {
                     const st = document.getElementById(`status-${o.order_id}`).value;
-                    const tr = document.getElementById(`track-${o.order_id}`).value.trim();
-                    saveStatus(o.order_id, st, tr || null);
+                    const cr = document.getElementById(`carrier-${o.order_id}`).value;
+                    const tr = document.getElementById(`track-${o.order_id}`).value.trim() || null;
+                    saveStatus(o.order_id, st, cr || null, tr);
                   }}
                   className="px-4 py-2 bg-black text-white rounded hover:opacity-90"
                 >
@@ -208,7 +244,11 @@ export default function ManageOrdersPage() {
                 </button>
 
                 <button
-                  onClick={() => saveStatus(o.order_id, "done", document.getElementById(`track-${o.order_id}`).value.trim() || o.tracking_number || null)}
+                  onClick={() => {
+                    const cr = document.getElementById(`carrier-${o.order_id}`).value;
+                    const tr = document.getElementById(`track-${o.order_id}`).value.trim() || o.tracking_code || null;
+                    saveStatus(o.order_id, "done", cr || null, tr);
+                  }}
                   className="px-4 py-2 bg-emerald-600 text-white rounded hover:bg-emerald-700"
                   title="ทำออเดอร์นี้เป็นสำเร็จ (ถ้าเป็น COD ระบบจะติ๊กจ่ายเงินให้เอง)"
                 >
@@ -247,27 +287,15 @@ export default function ManageOrdersPage() {
             />
 
             <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setSlipPreview(null)} className="px-3 py-2 rounded-lg border">ปิด</button>
               <button
-                onClick={() => setSlipPreview(null)}
-                className="px-3 py-2 rounded-lg border"
-              >
-                ปิด
-              </button>
-              {/* ใน modal ไม่รู้ payment_method ของออเดอร์นี้แน่ชัด จึงให้กดได้เฉพาะที่เปิดมาจาก non-COD (เราแสดงปุ่มดูสลิปเฉพาะที่มีสลิปอยู่แล้ว) */}
-              <button
-                onClick={async () => {
-                  await setPayment(slipPreview.orderId, "reject");
-                  setSlipPreview(null);
-                }}
+                onClick={async () => { await setPayment(slipPreview.orderId, "reject"); setSlipPreview(null); }}
                 className="px-3 py-2 rounded-lg bg-rose-600 text-white hover:bg-rose-700"
               >
                 ปฏิเสธสลิป
               </button>
               <button
-                onClick={async () => {
-                  await setPayment(slipPreview.orderId, "approve");
-                  setSlipPreview(null);
-                }}
+                onClick={async () => { await setPayment(slipPreview.orderId, "approve"); setSlipPreview(null); }}
                 className="px-3 py-2 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700"
               >
                 ยืนยันรับเงิน

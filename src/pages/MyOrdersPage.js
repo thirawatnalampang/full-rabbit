@@ -23,12 +23,52 @@ const PAYMENT_TH = {
   rejected: "สลิปถูกปฏิเสธ",
 };
 
+/* ================= Tracking helpers ================= */
+const trackingUrl = (carrier, code) => {
+  if (!code) return null;
+  const c = String(carrier || "").toLowerCase();
+  const q = encodeURIComponent(code);
+  if (c.includes("kerry")) return `https://th.kerryexpress.com/th/track/?track=${q}`;
+  if (c.includes("thai") || c.includes("ems")) return `https://track.thailandpost.co.th/?trackNumber=${q}`;
+  if (c.includes("j&t") || c.includes("jnt")) return `https://www.jtexpress.co.th/index/query/gzquery.html?billcode=${q}`;
+  if (c.includes("flash")) return `https://www.flashexpress.com/fle/tracking?se=${q}`;
+  // fallback: ค้นหาในกูเกิล
+  return `https://www.google.com/search?q=${encodeURIComponent(`${carrier || ""} ${code}`)}`;
+};
+
+function TrackingBadge({ carrier, code, updatedAt }) {
+  if (!code) return null;
+  const url = trackingUrl(carrier, code);
+  return (
+    <div className="flex flex-col items-end gap-0.5 text-xs">
+      <a
+        href={url}
+        target="_blank"
+        rel="noreferrer"
+        className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-700 hover:bg-amber-200"
+        title="กดเพื่อดูสถานะพัสดุ"
+      >
+        📦 {carrier ? `${carrier} • ` : ""}เลขพัสดุ: <span className="font-semibold">{code}</span>
+      </a>
+      {updatedAt ? (
+        <span className="text-neutral-400">
+          อัปเดต {new Date(updatedAt).toLocaleString("th-TH")}
+        </span>
+      ) : null}
+    </div>
+  );
+}
+
+/* ================= Badges ================= */
 function PaymentBadge({ method, status }) {
   const color =
-    status === "paid" ? "bg-emerald-100 text-emerald-700" :
-    status === "submitted" ? "bg-amber-100 text-amber-700" :
-    status === "rejected" ? "bg-rose-100 text-rose-700" :
-    "bg-neutral-100 text-neutral-700";
+    status === "paid"
+      ? "bg-emerald-100 text-emerald-700"
+      : status === "submitted"
+      ? "bg-amber-100 text-amber-700"
+      : status === "rejected"
+      ? "bg-rose-100 text-rose-700"
+      : "bg-neutral-100 text-neutral-700";
   const methodTH = method === "cod" ? "เก็บเงินปลายทาง" : "โอน";
   const statusTH = PAYMENT_TH[status] || PAYMENT_TH.unpaid;
   return <span className={`px-2 py-0.5 text-xs rounded-full ${color}`}>{methodTH} • {statusTH}</span>;
@@ -36,14 +76,19 @@ function PaymentBadge({ method, status }) {
 
 function OrderBadge({ status }) {
   const color =
-    status === "done" ? "bg-emerald-100 text-emerald-700" :
-    status === "shipped" ? "bg-sky-100 text-sky-700" :
-    status === "ready_to_ship" ? "bg-violet-100 text-violet-700" :
-    status === "cancelled" ? "bg-rose-100 text-rose-700" :
-    "bg-neutral-100 text-neutral-700";
+    status === "done"
+      ? "bg-emerald-100 text-emerald-700"
+      : status === "shipped"
+      ? "bg-sky-100 text-sky-700"
+      : status === "ready_to_ship"
+      ? "bg-violet-100 text-violet-700"
+      : status === "cancelled"
+      ? "bg-rose-100 text-rose-700"
+      : "bg-neutral-100 text-neutral-700";
   return <span className={`px-2 py-0.5 text-xs rounded-full ${color}`}>{STATUS_TH[status] || status}</span>;
 }
 
+/* ================= Page ================= */
 export default function MyOrdersPage() {
   const { user } = useAuth();
   const nav = useNavigate();
@@ -169,43 +214,50 @@ export default function MyOrdersPage() {
                     {new Date(o.order_date).toLocaleString("th-TH")} • {o.total_items} ชิ้น
                   </div>
 
-                  {/* รูปสินค้าทั้งหมด */}
+                  {/* รูปสินค้าทั้งหมด + รายชื่อ */}
                   {Array.isArray(o.items) && o.items.length > 0 && (
                     <>
                       <div className="mt-2 flex flex-wrap gap-2">
-      {o.items.map((it) => (
-        <img
-          key={it.order_detail_id}
-          src={it.item_image || FALLBACK_IMG}
-          alt={it.item_name || it.item_type}
-          className="w-12 h-12 rounded-md object-cover border"
-          onError={(e) => { e.currentTarget.src = FALLBACK_IMG; }}
-          title={it.item_name || it.item_type}
-        />
-      ))}
-    </div>
-    {/* รายการชื่อสินค้า + จำนวน (แสดงทุกชิ้น) */}
-<ul className="mt-3 space-y-1">
-  {o.items.map((it, idx) => (
-    <li
-      key={it.order_detail_id || `name-${idx}`}
-      className="flex items-center gap-2 text-base font-semibold text-gray-900"
-    >
-      <span className="truncate">
-        {it.item_name || it.item_type || "สินค้า"}
-      </span>
-      <span className="text-sm text-gray-500">× {Number(it.quantity || 1)}</span>
-    </li>
-  ))}
-</ul>
-  </>
-)}
+                        {o.items.map((it) => (
+                          <img
+                            key={it.order_detail_id}
+                            src={it.item_image || FALLBACK_IMG}
+                            alt={it.item_name || it.item_type}
+                            className="w-12 h-12 rounded-md object-cover border"
+                            onError={(e) => { e.currentTarget.src = FALLBACK_IMG; }}
+                            title={it.item_name || it.item_type}
+                          />
+                        ))}
+                      </div>
+                      <ul className="mt-3 space-y-1">
+                        {o.items.map((it, idx) => (
+                          <li
+                            key={it.order_detail_id || `name-${idx}`}
+                            className="flex items-center gap-2 text-base font-semibold text-gray-900"
+                          >
+                            <span className="truncate">{it.item_name || it.item_type || "สินค้า"}</span>
+                            <span className="text-sm text-gray-500">× {Number(it.quantity || 1)}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    </>
+                  )}
                 </div>
 
                 <div className="flex flex-col items-end gap-2 shrink-0">
                   <OrderBadge status={o.status} />
                   <PaymentBadge method={o.payment_method} status={o.payment_status} />
-                  <div className="font-bold text-emerald-600 whitespace-nowrap">{formatTHB(o.total_amount)}</div>
+
+                  {/* ✅ เลขพัสดุ + ลิงก์ติดตาม */}
+                  <TrackingBadge
+                    carrier={o.carrier}
+                    code={o.tracking_code}
+                    updatedAt={o.tracking_updated_at}
+                  />
+
+                  <div className="font-bold text-emerald-600 whitespace-nowrap">
+                    {formatTHB(o.total_amount)}
+                  </div>
                 </div>
               </div>
             </Link>

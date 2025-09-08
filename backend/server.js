@@ -785,44 +785,48 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
     client.release();
   }
 });
-
 /* ========= My Orders (รวมสินค้าทั้งหมด) ========= */
 app.get('/api/my-orders', async (req, res) => {
   try {
     const buyerId = Number(req.query.buyer_id);
     if (!Number.isFinite(buyerId)) return res.status(400).json({ message: 'invalid buyer_id' });
 
-    const q = await pool.query(
-      `
+    const q = await pool.query(`
       SELECT
-        o.order_id, o.order_date, o.total_amount, o.status,
-        o.payment_status, o.payment_method,
+        o.order_id,
+        o.order_date,
+        o.total_amount,
+        o.status,
+        o.payment_status,
+        o.payment_method,
+        /* ✅ ฟิลด์สำหรับเลขพัสดุ */
+        o.carrier,
+        o.tracking_code,
+        o.tracking_updated_at,
         COALESCE(SUM(od.quantity),0)::int AS total_items,
         json_agg(
-  json_build_object(
-    'order_detail_id', od.order_detail_id,
-    'item_type', od.item_type,
-    'item_name', COALESCE(r.name, p.name),
-    'item_image',
-      CASE
-        WHEN od.item_type='rabbit' THEN r.image_url
-        ELSE p.image_url
-      END,
-    'quantity', od.quantity,
-    'price', od.price
-  )
-  ORDER BY od.order_detail_id
-) AS items
+          json_build_object(
+            'order_detail_id', od.order_detail_id,
+            'item_type',       od.item_type,
+            'item_name',       COALESCE(r.name, p.name),
+            'item_image',
+              CASE
+                WHEN od.item_type = 'rabbit' THEN r.image_url
+                ELSE p.image_url
+              END,
+            'quantity', od.quantity,
+            'price',    od.price
+          )
+          ORDER BY od.order_detail_id
+        ) FILTER (WHERE od.order_detail_id IS NOT NULL) AS items   -- ✅ กัน null
       FROM orders o
       LEFT JOIN order_details od ON od.order_id = o.order_id
-      LEFT JOIN rabbits  r ON od.item_type='rabbit' AND r.rabbit_id  = od.item_id
+      LEFT JOIN rabbits  r ON od.item_type = 'rabbit' AND r.rabbit_id  = od.item_id
       LEFT JOIN products p ON od.item_type IN ('pet-food','equipment') AND p.product_id = od.item_id
       WHERE o.buyer_id = $1
       GROUP BY o.order_id
       ORDER BY o.order_date DESC
-      `,
-      [buyerId]
-    );
+    `, [buyerId]);
 
     res.json(q.rows);
   } catch (err) {
@@ -836,89 +840,129 @@ app.get('/api/orders/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) return res.status(400).json({ message: 'invalid id' });
+
     const head = await pool.query(
-      `SELECT o.order_id, o.order_code, o.buyer_id, o.order_date, o.total_amount, o.currency,
-              o.status, o.payment_status, o.payment_method,
-              o.contact_full_name, o.contact_phone,
-              o.shipping_method, o.shipping_address, o.shipping_fee,
-              o.subtotal, o.discount, o.note
-       FROM orders o WHERE o.order_id=$1`, [id]);
+      `SELECT
+         o.order_id, o.order_code, o.buyer_id, o.order_date, o.total_amount, o.currency,
+         o.status, o.payment_status, o.payment_method,
+         o.contact_full_name, o.contact_phone,
+         o.shipping_method, o.shipping_address, o.shipping_fee,
+         o.subtotal, o.discount, o.note,
+         /* ✅ เพิ่มฟิลด์พัสดุ */
+         o.carrier, o.tracking_code, o.tracking_updated_at
+       FROM orders o
+       WHERE o.order_id = $1`,
+      [id]
+    );
+
     if (!head.rowCount) return res.status(404).json({ message: 'not found' });
+
     const items = await pool.query(
       `SELECT od.order_detail_id, od.item_type, od.item_id, od.quantity, od.price,
               (od.quantity*od.price) AS line_total
-       FROM order_details od WHERE od.order_id=$1 ORDER BY od.order_detail_id ASC`, [id]);
+       FROM order_details od
+       WHERE od.order_id=$1
+       ORDER BY od.order_detail_id ASC`,
+      [id]
+    );
+
     res.json({ order: head.rows[0], items: items.rows });
-  } catch (err) { console.error('order detail error:', err); res.status(500).json({ message: 'server error' }); }
-});
-/* ========= Admin: รวมรายการ + ชื่อ/รูป ========= */
+  } catch (err) {
+    console.error('order detail error:', err);
+    res.status(500).json({ message: 'server error' });
+  }
+});/* ========= Admin: รวมรายการ + ชื่อ/รูป ========= */
 app.get('/api/admin/orders', async (_req, res) => {
   try {
-    const q = await pool.query(
-      `SELECT
-         o.*,
-         json_agg(
-           json_build_object(
-             'order_detail_id', od.order_detail_id,
-             'item_type',       od.item_type,
-             'item_id',         od.item_id,
-             'quantity',        od.quantity,
-             'price',           od.price,
-             'item_name',
-               CASE
-                 WHEN od.item_type = 'rabbit' THEN r.name
-                 WHEN od.item_type IN ('pet-food','equipment') THEN p.name
-                 ELSE NULL
-               END,
-             'item_image',
-               CASE
-                 WHEN od.item_type = 'rabbit' THEN r.image_url
-                 WHEN od.item_type IN ('pet-food','equipment') THEN p.image_url
-                 ELSE NULL
-               END
-           )
-         ) AS items
-       FROM orders o
-       LEFT JOIN order_details od
-         ON o.order_id = od.order_id
-       LEFT JOIN rabbits r
-         ON od.item_type = 'rabbit' AND r.rabbit_id = od.item_id
-       LEFT JOIN products p
-         ON od.item_type IN ('pet-food','equipment') AND p.product_id = od.item_id
-       GROUP BY o.order_id
-       ORDER BY o.order_date DESC`
-    );
+    const q = await pool.query(`
+      SELECT
+        o.*,
+        COALESCE(SUM(od.quantity), 0)::int AS total_items,
+        json_agg(
+          json_build_object(
+            'order_detail_id', od.order_detail_id,
+            'item_type',       od.item_type,
+            'item_id',         od.item_id,
+            'quantity',        od.quantity,
+            'price',           od.price,
+            'item_name',
+              CASE
+                WHEN od.item_type = 'rabbit' THEN r.name
+                WHEN od.item_type IN ('pet-food','equipment') THEN p.name
+                ELSE NULL
+              END,
+            'item_image',
+              CASE
+                WHEN od.item_type = 'rabbit' THEN r.image_url
+                WHEN od.item_type IN ('pet-food','equipment') THEN p.image_url
+                ELSE NULL
+              END
+          )
+          ORDER BY od.order_detail_id
+        ) FILTER (WHERE od.order_detail_id IS NOT NULL) AS items
+      FROM orders o
+      LEFT JOIN order_details od ON o.order_id = od.order_id
+      LEFT JOIN rabbits  r ON od.item_type = 'rabbit'
+                           AND r.rabbit_id  = od.item_id
+      LEFT JOIN products p ON od.item_type IN ('pet-food','equipment')
+                           AND p.product_id = od.item_id
+      GROUP BY o.order_id
+      ORDER BY o.order_date DESC
+    `);
     res.json(q.rows);
   } catch (err) {
     console.error('fetch admin orders error:', err);
     res.status(500).json({ message: 'failed to fetch orders' });
   }
 });
-/* ========= Admin: อัปเดตสถานะ & เลขพัสดุ ========= */
+/* ========= Admin: อัปเดตสถานะ/ขนส่ง/เลขพัสดุ ========= */
 app.put('/api/admin/orders/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { status, tracking } = req.body;
+    const { status, carrier, tracking_code, payment_status } = req.body;
 
-    // ดึงข้อมูล order เดิมมาก่อน
-    const cur = await pool.query(`SELECT payment_method, payment_status FROM orders WHERE order_id=$1`, [id]);
+    // อ่านของเดิม
+    const cur = await pool.query(
+      `SELECT payment_method, payment_status, tracking_code FROM orders WHERE order_id=$1`,
+      [id]
+    );
     if (!cur.rowCount) return res.status(404).json({ message: 'not found' });
 
-    let newPayStatus = cur.rows[0].payment_status;
+    const prev = cur.rows[0];
+    let newPayStatus = payment_status ?? prev.payment_status;
 
-    // ถ้า COD และกดเป็น done → เปลี่ยนเป็น paid อัตโนมัติ
-    if (cur.rows[0].payment_method === 'cod' && status === 'done') {
+    // กฎ COD: ถ้าส่งเป็น "done" → ถือว่าจ่ายแล้ว
+    if (prev.payment_method === 'cod' && status === 'done') {
       newPayStatus = 'paid';
     }
 
+    // ตรวจว่า tracking เปลี่ยนไหม
+    const trackingChanged =
+      typeof tracking_code === 'string' && tracking_code !== prev.tracking_code;
+
     const q = await pool.query(
-      `UPDATE orders 
-       SET status = COALESCE($1,status),
-           tracking_number = COALESCE($2,tracking_number),
-           payment_status = $3
-       WHERE order_id=$4
-       RETURNING *`,
-      [status ?? null, tracking ?? null, newPayStatus, id]
+      `
+      UPDATE orders
+      SET
+        status               = COALESCE($1, status),
+        carrier              = COALESCE($2, carrier),
+        tracking_code        = COALESCE($3, tracking_code),
+        tracking_updated_at  = CASE
+                                  WHEN $4::boolean = TRUE THEN NOW()
+                                  ELSE tracking_updated_at
+                                END,
+        payment_status       = $5
+      WHERE order_id = $6
+      RETURNING *;
+      `,
+      [
+        status ?? null,
+        carrier ?? null,
+        tracking_code ?? null,
+        trackingChanged,     // $4
+        newPayStatus,        // $5
+        id                   // $6
+      ]
     );
 
     res.json(q.rows[0]);
@@ -997,34 +1041,46 @@ function isAdmin(req, res, next) {
   if (req.user?.role === 'admin') return next();
   return res.status(403).json({ message: 'forbidden: admin only' });
 }
-
 // ====== /api/admin/dashboard/stats (ADMIN ONLY) ======
 app.get('/api/admin/dashboard/stats', auth, isAdmin, async (req, res) => {
   const client = await pool.connect();
   try {
-    // รับช่วงวันที่ (optional) เช่น ?start=2025-09-01&end=2025-09-07
-    // ถ้าไม่ส่งมา จะยึด today / this month / last 7 days ตาม logic เดิม
     const { start, end } = req.query; // ISO yyyy-mm-dd
 
-    // ตรวจ schema ของ order_details เพื่อให้ query topProducts ไม่พัง
-    const colsRes = await client.query(`
-      SELECT column_name
-      FROM information_schema.columns
-      WHERE table_name = 'order_details'
-    `);
-    const cols = colsRes.rows.map(r => r.column_name);
-    const findCol = (cands) => cands.find(c => cols.includes(c));
+    // --------- อ่าน schema ---------
+    const qCols = async (tbl) =>
+      (await client.query(`SELECT column_name FROM information_schema.columns WHERE table_name=$1`, [tbl]))
+        .rows.map(r => r.column_name);
 
-    const OD_PRODUCT_COL = findCol(['product_id', 'productid', 'product', 'prod_id']);
-    const OD_QTY_COL     = findCol(['qty', 'quantity', 'qty_qty']);
-    const OD_PRICE_COL   = findCol(['price', 'unit_price', 'sale_price']);
-    const canTopProducts = !!OD_PRODUCT_COL;
+    const colsOD = await qCols('order_details');
+    const colsP  = await qCols('products');
+    const colsR  = (await client.query(`
+      SELECT COUNT(*)::int AS c FROM information_schema.tables WHERE table_name='rabbits'
+    `)).rows[0].c > 0 ? await qCols('rabbits') : [];
 
-    // helper สำหรับช่วง 7 วัน (อิง end หรือวันนี้)
+    const findCol = (cands, cols, fallback=null) => cands.find(c => cols.includes(c)) || fallback;
+
+    // order_details
+    const OD_ITEM_TYPE_COL = findCol(['item_type','type'], colsOD, 'item_type');
+    const OD_ITEM_ID_COL   = findCol(['item_id','product_id','prod_id'], colsOD, 'item_id');
+    const OD_QTY_COL       = findCol(['quantity','qty'], colsOD, 'quantity');
+    const OD_PRICE_COL     = findCol(['price','unit_price','sale_price'], colsOD, 'price');
+
+    // products
+    const P_ID_COL   = findCol(['product_id','id','pid'], colsP, 'product_id');
+    const P_NAME_COL = findCol(['name','product_name','title'], colsP, 'name');
+    const P_IMG_COL  = findCol(['image_url','image','img','thumbnail','thumb','picture','photo','cover','main_image','image_path','img_url'], colsP);
+
+    // rabbits (อาจไม่มี)
+    const HAS_RABBITS = colsR.length > 0;
+    const R_ID_COL    = HAS_RABBITS ? findCol(['rabbit_id','id'], colsR, 'rabbit_id') : null;
+    const R_NAME_COL  = HAS_RABBITS ? findCol(['name','rabbit_name','title'], colsR, 'name') : null;
+    const R_IMG_COL   = HAS_RABBITS ? findCol(['image_url','image','img','photo','picture','thumbnail','thumb'], colsR) : null;
+
+    // --------- helper วันที่ ---------
     const sevenEnd  = end ? `DATE '${end}'` : `NOW()::date`;
     const sevenFrom = end ? `DATE '${end}' - INTERVAL '6 days'` : `NOW()::date - INTERVAL '6 days'`;
 
-    // เงื่อนไขช่วงเวลา (month / today) จะใช้ค่าปริยายถ้าไม่ส่ง start/end
     const todayCond = start && end
       ? `(order_date)::date BETWEEN DATE '${start}' AND DATE '${end}'`
       : `(order_date)::date = (NOW())::date`;
@@ -1033,6 +1089,7 @@ app.get('/api/admin/dashboard/stats', auth, isAdmin, async (req, res) => {
       ? `date_trunc('month', order_date) = date_trunc('month', DATE '${start}')`
       : `date_trunc('month', order_date) = date_trunc('month', NOW())`;
 
+    // --------- Query หลักทั้งหมด ---------
     const [
       salesTodayQ,
       salesMonthQ,
@@ -1044,37 +1101,21 @@ app.get('/api/admin/dashboard/stats', auth, isAdmin, async (req, res) => {
       recentOrdersQ,
       topProductsQ,
     ] = await Promise.all([
-      // ยอดขาย (วันนี้หรือช่วงที่ส่งมา)
       client.query(`
         SELECT COALESCE(SUM(total_amount),0)::numeric AS total
         FROM orders
         WHERE ${todayCond}
           AND status IN ('done','shipped','ready_to_ship')
       `),
-
-      // ยอดขายเดือนนี้ (หรือเดือนของ start ถ้ามี)
       client.query(`
         SELECT COALESCE(SUM(total_amount),0)::numeric AS total
         FROM orders
         WHERE ${monthCond}
           AND status IN ('done','shipped','ready_to_ship')
       `),
+      client.query(`SELECT COUNT(*)::int AS cnt FROM orders WHERE ${todayCond}`),
+      client.query(`SELECT COUNT(*)::int AS cnt FROM orders WHERE ${monthCond}`),
 
-      // จำนวนออเดอร์ (วันนี้หรือช่วงที่ส่งมา)
-      client.query(`
-        SELECT COUNT(*)::int AS cnt
-        FROM orders
-        WHERE ${todayCond}
-      `),
-
-      // จำนวนออเดอร์เดือนนี้ (หรือเดือนของ start)
-      client.query(`
-        SELECT COUNT(*)::int AS cnt
-        FROM orders
-        WHERE ${monthCond}
-      `),
-
-      // จำนวนสินค้า + ใกล้หมด
       client.query(`
         SELECT
           COUNT(*)::int AS total_products,
@@ -1082,94 +1123,105 @@ app.get('/api/admin/dashboard/stats', auth, isAdmin, async (req, res) => {
         FROM products
       `),
 
-      // นับกระต่าย (มีตารางค่อยนับ)
-      client.query(`
-        SELECT COALESCE(
-          (SELECT COUNT(*)::int FROM information_schema.tables WHERE table_name='rabbits'),
-          0
-        ) AS has_rabbits;
-      `).then(async r => {
-        const has = Number(r.rows?.[0]?.has_rabbits || 0) > 0;
-        if (!has) return { rows: [{ total_rabbits: 0 }] };
-        const rr = await client.query(`SELECT COUNT(*)::int AS total_rabbits FROM rabbits`);
-        return rr;
-      }),
+      // count rabbits table if exists
+      HAS_RABBITS
+        ? client.query(`SELECT COUNT(*)::int AS total_rabbits FROM rabbits`)
+        : Promise.resolve({ rows: [{ total_rabbits: 0 }] }),
 
-      // กราฟ 7 วันล่าสุด (อิง end หรือวันนี้)
       client.query(`
         WITH days AS (
-          SELECT generate_series(
-            (${sevenFrom}),
-            (${sevenEnd}),
-            INTERVAL '1 day'
-          )::date AS d
+          SELECT generate_series( (${sevenFrom}), (${sevenEnd}), INTERVAL '1 day')::date AS d
         )
-        SELECT
-          d::text AS date,
-          COALESCE(SUM(o.total_amount),0)::numeric AS total
+        SELECT d::text AS date,
+               COALESCE(SUM(o.total_amount),0)::numeric AS total
         FROM days
         LEFT JOIN orders o
           ON (o.order_date)::date = d
-          AND o.status IN ('done','shipped','ready_to_ship')
+         AND o.status IN ('done','shipped','ready_to_ship')
         GROUP BY d
         ORDER BY d
       `),
 
-      // ออเดอร์ล่าสุด 8 รายการ (โชว์ชื่อจาก contact_full_name)
+      // ✅ ออเดอร์ล่าสุด 10 รายการ + สินค้า/กระต่าย
       client.query(`
+        WITH latest AS (
+          SELECT
+            o.order_id, o.order_date, o.status, o.payment_status, o.total_amount,
+            COALESCE(o.contact_full_name, 'ผู้ใช้ #' || o.buyer_id::text) AS buyer_name
+          FROM orders o
+          ORDER BY o.order_date DESC
+          LIMIT 10
+        )
         SELECT
-          o.order_id,
-          o.order_date,
-          o.status,
-          o.payment_status,
-          o.total_amount,
-          COALESCE(o.contact_full_name, 'ผู้ใช้ #' || o.buyer_id::text) AS buyer_name
-        FROM orders o
-        ORDER BY o.order_date DESC
-        LIMIT 8
+          l.order_id, l.order_date, l.status, l.payment_status, l.total_amount, l.buyer_name,
+          COALESCE(
+            JSON_AGG(
+              CASE
+                WHEN od.${OD_ITEM_TYPE_COL} = 'rabbit' ${HAS_RABBITS ? `THEN JSON_BUILD_OBJECT(
+                  'product_id', r.${R_ID_COL},
+                  'name', COALESCE(r.${R_NAME_COL}, 'ไม่ระบุชื่อ'),
+                  'image', ${R_IMG_COL ? `r.${R_IMG_COL}` : 'NULL'},
+                  'qty', od.${OD_QTY_COL},
+                  'price', od.${OD_PRICE_COL}
+                )` : `THEN JSON_BUILD_OBJECT(
+                  'product_id', od.${OD_ITEM_ID_COL},
+                  'name', 'กระต่าย',
+                  'image', NULL,
+                  'qty', od.${OD_QTY_COL},
+                  'price', od.${OD_PRICE_COL}
+                )`}
+                ELSE JSON_BUILD_OBJECT(
+                  'product_id', p.${P_ID_COL},
+                  'name', COALESCE(p.${P_NAME_COL}, 'ไม่ระบุชื่อ'),
+                  'image', ${P_IMG_COL ? `p.${P_IMG_COL}` : 'NULL'},
+                  'qty', od.${OD_QTY_COL},
+                  'price', od.${OD_PRICE_COL}
+                )
+              END
+            ) FILTER (WHERE od.order_id IS NOT NULL),
+            '[]'::json
+          ) AS items
+        FROM latest l
+        LEFT JOIN order_details od ON od.order_id = l.order_id
+        LEFT JOIN products p ON p.${P_ID_COL} = od.${OD_ITEM_ID_COL} AND od.${OD_ITEM_TYPE_COL} <> 'rabbit'
+        ${HAS_RABBITS ? `LEFT JOIN rabbits r ON r.${R_ID_COL} = od.${OD_ITEM_ID_COL} AND od.${OD_ITEM_TYPE_COL} = 'rabbit'` : ''}
+        GROUP BY l.order_id, l.order_date, l.status, l.payment_status, l.total_amount, l.buyer_name
+        ORDER BY l.order_date DESC
       `),
 
-      // Top 5 สินค้าขายดี (30 วันล่าสุดจาก end)
-      (async () => {
-        if (!canTopProducts) return { rows: [] };
-        const QTY_EXPR   = OD_QTY_COL   ? `od.${OD_QTY_COL}`   : `1`;
-        const PRICE_EXPR = OD_PRICE_COL ? `od.${OD_PRICE_COL}` : `p.price`;
-        const sinceExpr  = end ? `DATE '${end}' - INTERVAL '30 days'` : `NOW() - INTERVAL '30 days'`;
-        const untilExpr  = end ? `DATE '${end}' + INTERVAL '1 day'`   : `NOW()`;
-
-        const sql = `
-          SELECT
-            p.product_id AS product_id,
-            COALESCE(p.name, p.product_name, p.title, 'ไม่ระบุชื่อ') AS product_name,
-            SUM(${QTY_EXPR})::int AS sold_qty,
-            SUM( (${QTY_EXPR}) * ${PRICE_EXPR} )::numeric AS revenue
-          FROM orders o
-          JOIN order_details od ON od.order_id = o.order_id
-          JOIN products p       ON p.product_id = od.${OD_PRODUCT_COL}
-          WHERE o.order_date >= (${sinceExpr})
-            AND o.order_date <  (${untilExpr})
-            AND o.status IN ('done','shipped','ready_to_ship')
-          GROUP BY p.product_id, product_name
-          ORDER BY sold_qty DESC
-          LIMIT 5
-        `;
-        return client.query(sql);
-      })(),
+      // ✅ Top 5 สินค้าขายดี (7 วัน) รวม products + rabbits
+      client.query(`
+        SELECT
+          CASE WHEN od.${OD_ITEM_TYPE_COL} = 'rabbit' ${HAS_RABBITS ? `THEN r.${R_ID_COL}` : `THEN od.${OD_ITEM_ID_COL}`} ELSE p.${P_ID_COL} END AS product_id,
+          CASE WHEN od.${OD_ITEM_TYPE_COL} = 'rabbit' ${HAS_RABBITS ? `THEN COALESCE(r.${R_NAME_COL}, 'ไม่ระบุชื่อ')` : `THEN 'กระต่าย'`} ELSE COALESCE(p.${P_NAME_COL}, 'ไม่ระบุชื่อ') END AS product_name,
+          CASE WHEN od.${OD_ITEM_TYPE_COL} = 'rabbit' ${HAS_RABBITS ? `THEN ${R_IMG_COL ? `r.${R_IMG_COL}` : 'NULL'}` : `THEN NULL`} ELSE ${P_IMG_COL ? `p.${P_IMG_COL}` : 'NULL'} END AS image,
+          SUM(od.${OD_QTY_COL})::int AS sold_qty,
+          SUM( (od.${OD_QTY_COL}) * od.${OD_PRICE_COL} )::numeric AS revenue
+        FROM orders o
+        JOIN order_details od ON od.order_id = o.order_id
+        LEFT JOIN products p ON p.${P_ID_COL} = od.${OD_ITEM_ID_COL} AND od.${OD_ITEM_TYPE_COL} <> 'rabbit'
+        ${HAS_RABBITS ? `LEFT JOIN rabbits r ON r.${R_ID_COL} = od.${OD_ITEM_ID_COL} AND od.${OD_ITEM_TYPE_COL} = 'rabbit'` : ''}
+        WHERE o.order_date >= (${sevenFrom})
+          AND o.order_date <  (${sevenEnd} + INTERVAL '1 day')
+          AND o.status IN ('done','shipped','ready_to_ship')
+        GROUP BY 1,2,3
+        ORDER BY sold_qty DESC
+        LIMIT 5
+      `),
     ]);
 
-    // รวมผลลัพธ์
-    const salesToday   = Number(salesTodayQ.rows[0]?.total || 0);
-    const salesMonth   = Number(salesMonthQ.rows[0]?.total || 0);
-    const ordersToday  = Number(ordersTodayQ.rows[0]?.cnt || 0);
-    const ordersMonth  = Number(ordersMonthQ.rows[0]?.cnt || 0);
-    const totalProducts= Number(invQ.rows[0]?.total_products || 0);
-    const lowStock     = Number(invQ.rows[0]?.low_stock || 0);
-    const totalRabbits = Number(rabbitsQ.rows[0]?.total_rabbits || 0);
+    // --------- รวมผล ---------
+    const stats = {
+      salesToday:   Number(salesTodayQ.rows[0]?.total || 0),
+      salesMonth:   Number(salesMonthQ.rows[0]?.total || 0),
+      ordersToday:  Number(ordersTodayQ.rows[0]?.cnt || 0),
+      ordersMonth:  Number(ordersMonthQ.rows[0]?.cnt || 0),
+      totalProducts:Number(invQ.rows[0]?.total_products || 0),
+      lowStock:     Number(invQ.rows[0]?.low_stock || 0),
+      totalRabbits: Number(rabbitsQ.rows[0]?.total_rabbits || 0),
+    };
 
-    const salesByDay   = sales7DaysQ.rows.map(r => ({
-      date: r.date,
-      total: Number(r.total || 0),
-    }));
+    const salesByDay = sales7DaysQ.rows.map(r => ({ date: r.date, total: Number(r.total || 0) }));
 
     const recentOrders = recentOrdersQ.rows.map(r => ({
       order_id: r.order_id,
@@ -1178,29 +1230,24 @@ app.get('/api/admin/dashboard/stats', auth, isAdmin, async (req, res) => {
       payment_status: r.payment_status,
       total_amount: Number(r.total_amount || 0),
       buyer_name: r.buyer_name || '—',
+      items: (r.items || []).map(it => ({
+        product_id: it.product_id,
+        name: it.name,
+        image: it.image || null,
+        qty: Number(it.qty || 0),
+        price: Number(it.price || 0),
+      })),
     }));
 
     const topProducts = (topProductsQ.rows || []).map(r => ({
       product_id: r.product_id,
       name: r.product_name,
+      image: r.image || null,
       sold_qty: Number(r.sold_qty || 0),
       revenue: Number(r.revenue || 0),
     }));
 
-    res.json({
-      stats: {
-        salesToday,
-        salesMonth,
-        ordersToday,
-        ordersMonth,
-        totalProducts,
-        lowStock,
-        totalRabbits,
-      },
-      salesByDay,
-      recentOrders,
-      topProducts,
-    });
+    res.json({ stats, salesByDay, recentOrders, topProducts });
   } catch (err) {
     console.error('admin/dashboard/stats error:', err);
     res.status(500).json({ message: 'failed to load dashboard', error: String(err?.message || err) });
@@ -1208,6 +1255,7 @@ app.get('/api/admin/dashboard/stats', auth, isAdmin, async (req, res) => {
     client.release();
   }
 });
+
 
 /* ===================== Start server ===================== */
 app.listen(port, ()=>console.log(`🐰 Server running at http://localhost:${port}`));
