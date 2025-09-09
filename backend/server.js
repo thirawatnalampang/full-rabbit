@@ -1256,6 +1256,83 @@ app.get('/api/admin/dashboard/stats', auth, isAdmin, async (req, res) => {
   }
 });
 
+// ================================================
+// =============== USERS (ADMIN) ==================
+// ================================================
 
+// GET: ดึงผู้ใช้ทั้งหมด (แมพ user_id -> id ให้ React ใช้ได้)
+app.get("/api/admin/users", async (req, res) => {
+  try {
+    const q = `
+      SELECT 
+        user_id AS id,
+        username,
+        email,
+        role,
+        phone,
+        address,
+        profile_image,
+        gender,
+        email_verified
+      FROM users
+      ORDER BY user_id ASC
+    `;
+    const result = await pool.query(q);
+    res.json(result.rows);
+  } catch (err) {
+    console.error("GET /api/admin/users error:", err);
+    res.status(500).json({ message: "Server error" });
+  }
+});
+
+// DELETE: ลบผู้ใช้ตาม id (จริง ๆ คือ user_id)
+// ** เลือกแบบที่ต้องการใช้งานด้านล่าง **
+app.delete("/api/admin/users/:id", async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: "invalid id" });
+    }
+
+    // ---------- แบบนุ่ม (Soft Delete) ----------
+    // ปลอดภัยกับ FK ที่ไม่ได้ตั้ง ON DELETE CASCADE
+    // เปิดใช้ 3 บรรทัดนี้ แล้วคอมเมนต์ส่วน "ลบแข็ง" ด้านล่าง
+    // const qSoft = `UPDATE users SET role = 'banned' WHERE user_id = $1 RETURNING user_id`;
+    // const soft = await pool.query(qSoft, [id]);
+    // if (soft.rowCount === 0) return res.status(404).json({ message: "User not found" });
+
+    // ---------- แบบลบแข็ง (Hard Delete) ----------
+    // ถ้า FK ยังไม่ตั้ง ON DELETE CASCADE อาจติด constraint
+    await client.query("BEGIN");
+
+    // ตัวอย่าง: หากมีตารางที่อ้างผู้ใช้ ให้ลบก่อน (แก้ชื่อ table/column ให้ตรง schema ของคุณ)
+    // await client.query(`DELETE FROM order_details WHERE order_id IN (SELECT id FROM orders WHERE buyer_id = $1)`, [id]);
+    // await client.query(`DELETE FROM orders WHERE buyer_id = $1`, [id]);
+    // await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [id]);
+    // await client.query(`DELETE FROM carts WHERE user_id = $1`, [id]);
+    // await client.query(`DELETE FROM addresses WHERE user_id = $1`, [id]);
+
+    const delUser = await client.query(
+      `DELETE FROM users WHERE user_id = $1 RETURNING user_id`,
+      [id]
+    );
+
+    if (delUser.rowCount === 0) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    await client.query("COMMIT");
+    res.json({ message: "User deleted", id });
+  } catch (err) {
+    await pool.query("ROLLBACK").catch(() => {});
+    console.error("DELETE /api/admin/users/:id error:", err);
+    // ถ้าติด FK constraint แนะนำตั้ง FK ให้เป็น ON DELETE CASCADE หรือใช้ Soft Delete แทน
+    res.status(500).json({ message: "Server error", detail: err?.message });
+  } finally {
+    client.release();
+  }
+});
 /* ===================== Start server ===================== */
 app.listen(port, ()=>console.log(`🐰 Server running at http://localhost:${port}`));

@@ -19,7 +19,7 @@ import SellerDashboard from './pages/SellerDashboard';
 import ManageRabbits from './pages/ManageRabbits';
 import AddRabbitForm from './pages/AddRabbitForm';
 import ManageOrdersPage from './pages/ManageOrdersPage'; 
-import DeliveryStatus from './pages/DeliveryStatus';
+import UsersPage from './pages/UsersPage';
 import StatisticsPage from './pages/StatisticsPage';
 import SearchPage from './pages/SearchPage';
 import ParentsPage from './pages/ParentsPage'; 
@@ -60,7 +60,6 @@ function App() {
           <Route path="/manage-rabbits" element={<ManageRabbits />} />
           <Route path="/add-rabbit" element={<AddRabbitForm />} />
           <Route path="/manage-orders" element={<ManageOrdersPage />} />
-          <Route path="/shipping" element={<DeliveryStatus />} />
           <Route path="/statistics" element={<StatisticsPage />} />
           <Route path="/search" element={<SearchPage />} />
           <Route path="/parents" element={<ParentsPage />} />
@@ -74,6 +73,7 @@ function App() {
           <Route path="/my-orders" element={<MyOrdersPage />} />
           <Route path="/orders/:id" element={<OrderDetailPage />} />
           <Route path="*" element={<NotFound />} />
+          <Route path="/users" element={<UsersPage />} />
         </Routes>
       </div>
     </>

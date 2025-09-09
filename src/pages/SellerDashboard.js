@@ -38,14 +38,14 @@ export default function SellerDashboard() {
           <span className="font-bold">คำสั่งซื้อ</span>
         </Link>
 
-        {/* การจัดส่ง */}
-        <Link
-          to="/shipping"
-          className="bg-blue-50 px-6 py-4 rounded-lg shadow hover:shadow-md hover:-translate-y-1 transition flex flex-col items-center"
-        >
-          <span className="text-3xl mb-2">🚚</span>
-          <span className="font-bold">การจัดส่ง</span>
-        </Link>
+        {/* ผู้ใช้ */}
+<Link
+  to="/users" // 👉 เปลี่ยน path ไปที่หน้าผู้ใช้
+  className="bg-blue-50 px-6 py-4 rounded-lg shadow hover:shadow-md hover:-translate-y-1 transition flex flex-col items-center"
+>
+  <span className="text-3xl mb-2">👤</span> {/* เปลี่ยน emoji จากรถเป็นไอคอนผู้ใช้ */}
+  <span className="font-bold">ผู้ใช้</span> {/* เปลี่ยนข้อความ */}
+</Link>
 
         {/* สถิติ */}
         <Link
