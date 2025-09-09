@@ -164,9 +164,9 @@ export default function ProfilePage() {
         return String(src).split('?')[0];
       })();
 
+      // ✅ ไม่ส่ง email เพื่อป้องกันการแก้ไขอีเมล
       const updatedUser = {
         username: usernameRef.current.value,
-        email: emailRef.current.value,
         phone: phoneValue,
         address: addressRef.current.value,
         gender,
@@ -186,12 +186,13 @@ export default function ProfilePage() {
 
       await preloadAndSet(profileUrl);
 
+      // ✅ คงค่าอีเมลเดิมไว้เสมอ
       login(
         mergeUser(user, {
           ...data,
           user_id: data.user_id,
           username: data.username,
-          email: data.email || '',
+          email: user.email || '',
           phone: data.phone || '',
           address: data.address || '',
           gender: (data.gender ?? gender),
@@ -279,11 +280,28 @@ export default function ProfilePage() {
         <div className="space-y-4 max-w-md mx-auto">
           <div>
             <label className="block text-sm font-semibold mb-1">Username</label>
-            <input type="text" ref={usernameRef} className="w-full border-b border-black focus:outline-none p-1" defaultValue={user.username} disabled />
+            {/* ✅ เปิดให้แก้ชื่อได้ */}
+            <input
+              type="text"
+              ref={usernameRef}
+              className="w-full border-b border-black focus:outline-none p-1"
+              defaultValue={user.username}
+            />
           </div>
           <div>
-            <label className="block text-sm font-semibold mb-1">Email</label>
-            <input type="email" ref={emailRef} className="w-full border-b border-black focus:outline-none p-1" defaultValue={user.email} />
+            <label className="block text-sm font-semibold mb-1">Email </label>
+            {/* ✅ ล็อกอีเมล: ห้ามแก้ และไม่ส่งไป backend */}
+            <input
+              type="email"
+              ref={emailRef}
+              className="w-full border-b border-black focus:outline-none p-1 bg-gray-100 cursor-not-allowed"
+              defaultValue={user.email}
+              disabled
+              readOnly
+              aria-disabled="true"
+              autoComplete="off"
+              title="อีเมลไม่สามารถแก้ไขได้"
+            />
           </div>
           <div>
             <label className="block text-sm font-semibold mb-1">Phone</label>

@@ -473,7 +473,6 @@ app.post('/api/login', async (req, res) => {
     res.status(500).json({ message: 'เกิดข้อผิดพลาดในระบบ' });
   }
 });
-
 app.put('/api/users/:id', async (req, res) => {
   const { id } = req.params;
   const { username, email, phone, address, gender, profileImage } = req.body;
@@ -486,12 +485,30 @@ app.put('/api/users/:id', async (req, res) => {
     }
     const before = beforeRes.rows[0];
 
+    // ❌ ห้ามแก้ email: ถ้าส่ง email มาและต่างจากเดิม → ปฏิเสธ
+    if (typeof email !== 'undefined' && email !== before.email) {
+      console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:email_change_attempt, time:${nowISO()}`);
+      return res.status(400).json({ error: 'Email cannot be changed' });
+    }
+
+    // ✅ อัปเดตเฉพาะฟิลด์ที่อนุญาต (ไม่แตะ email เลย)
     const result = await pool.query(
       `UPDATE users 
-       SET username=$1, email=$2, phone=$3, address=$4, gender=$5, profile_image=$6
-       WHERE user_id=$7 
+         SET username = $1,
+             phone = $2,
+             address = $3,
+             gender = $4,
+             profile_image = $5
+       WHERE user_id = $6
        RETURNING *`,
-      [username || null, email || null, phone || null, address || null, gender || null, profileImage || null, id]
+      [
+        (typeof username !== 'undefined') ? username : before.username,
+        (typeof phone !== 'undefined') ? phone : before.phone,
+        (typeof address !== 'undefined') ? address : before.address,
+        (typeof gender !== 'undefined') ? gender : before.gender,
+        (typeof profileImage !== 'undefined') ? profileImage : before.profile_image,
+        id
+      ]
     );
 
     const after = result.rows[0];
@@ -1284,9 +1301,7 @@ app.get("/api/admin/users", async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 });
-
-// DELETE: ลบผู้ใช้ตาม id (จริง ๆ คือ user_id)
-// ** เลือกแบบที่ต้องการใช้งานด้านล่าง **
+// DELETE: ลบผู้ใช้ตาม user_id
 app.delete("/api/admin/users/:id", async (req, res) => {
   const client = await pool.connect();
   try {
@@ -1295,23 +1310,7 @@ app.delete("/api/admin/users/:id", async (req, res) => {
       return res.status(400).json({ message: "invalid id" });
     }
 
-    // ---------- แบบนุ่ม (Soft Delete) ----------
-    // ปลอดภัยกับ FK ที่ไม่ได้ตั้ง ON DELETE CASCADE
-    // เปิดใช้ 3 บรรทัดนี้ แล้วคอมเมนต์ส่วน "ลบแข็ง" ด้านล่าง
-    // const qSoft = `UPDATE users SET role = 'banned' WHERE user_id = $1 RETURNING user_id`;
-    // const soft = await pool.query(qSoft, [id]);
-    // if (soft.rowCount === 0) return res.status(404).json({ message: "User not found" });
-
-    // ---------- แบบลบแข็ง (Hard Delete) ----------
-    // ถ้า FK ยังไม่ตั้ง ON DELETE CASCADE อาจติด constraint
     await client.query("BEGIN");
-
-    // ตัวอย่าง: หากมีตารางที่อ้างผู้ใช้ ให้ลบก่อน (แก้ชื่อ table/column ให้ตรง schema ของคุณ)
-    // await client.query(`DELETE FROM order_details WHERE order_id IN (SELECT id FROM orders WHERE buyer_id = $1)`, [id]);
-    // await client.query(`DELETE FROM orders WHERE buyer_id = $1`, [id]);
-    // await client.query(`DELETE FROM cart_items WHERE user_id = $1`, [id]);
-    // await client.query(`DELETE FROM carts WHERE user_id = $1`, [id]);
-    // await client.query(`DELETE FROM addresses WHERE user_id = $1`, [id]);
 
     const delUser = await client.query(
       `DELETE FROM users WHERE user_id = $1 RETURNING user_id`,
@@ -1324,12 +1323,22 @@ app.delete("/api/admin/users/:id", async (req, res) => {
     }
 
     await client.query("COMMIT");
-    res.json({ message: "User deleted", id });
+    return res.json({ message: "User deleted", id });
   } catch (err) {
-    await pool.query("ROLLBACK").catch(() => {});
+    // ✅ ใช้ client ไม่ใช่ pool
+    await client.query("ROLLBACK").catch(() => {});
+
+    // ถ้าติด FK → แจ้ง 409 และบอกทางเลือก
+    if (err?.code === "23503") {
+      return res.status(409).json({
+        message: "Cannot delete user: there are dependent orders referencing this user.",
+        hint: "Set FK to ON DELETE CASCADE, or soft-delete the user, หรือให้ลบ orders ก่อน",
+        constraint: err?.constraint,
+      });
+    }
+
     console.error("DELETE /api/admin/users/:id error:", err);
-    // ถ้าติด FK constraint แนะนำตั้ง FK ให้เป็น ON DELETE CASCADE หรือใช้ Soft Delete แทน
-    res.status(500).json({ message: "Server error", detail: err?.message });
+    return res.status(500).json({ message: "Server error", detail: err?.message });
   } finally {
     client.release();
   }
