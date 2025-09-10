@@ -1,4 +1,5 @@
 // src/pages/CartPage.jsx
+import React from "react";
 import { useAuth } from '../context/AuthContext';
 import { useCart } from '../context/CartContext';
 import { useNavigate, Link } from 'react-router-dom';
@@ -11,7 +12,6 @@ function getImage(it) {
   return it.image || it.image_url || it.img || it.photo || FALLBACK_IMG;
 }
 function getId(it) {
-  // ตอนนี้ id ในตะกร้าจะเป็น unique id แล้ว (type-baseId)
   return it.id ?? it.product_id ?? it.rabbit_id ?? it._id ?? String(it.name || Math.random());
 }
 function getName(it) {
@@ -37,6 +37,11 @@ function detailLink(it) {
   if (t === 'pet-food') return `/pet-food/${id}`;
   return `/pets/${id}`;
 }
+// ✅ อ่านสต๊อกจาก item (รองรับชื่อฟิลด์หลายแบบ)
+function getStock(it) {
+  const s = Number(it.stock ?? it.available ?? it.qtyAvailable ?? NaN);
+  return Number.isFinite(s) ? s : Infinity; // ถ้าไม่มี ให้ถือว่าไม่จำกัด
+}
 
 export default function CartPage() {
   const { user } = useAuth();
@@ -45,12 +50,22 @@ export default function CartPage() {
 
   const subtotal = cartItems.reduce((sum, it) => sum + getUnitPrice(it) * getQty(it), 0);
 
-  const handleCheckout = () => {
-    if (!user) {
-      navigate('/get-started', { state: { from: '/checkout' } });
-    } else {
-      navigate('/checkout');
+  // ✅ ถ้าสต๊อกลดลงจนต่ำกว่าในตะกร้า ให้ปรับลงอัตโนมัติ
+  //    (กันกรณีเปิดตะกร้าทิ้งไว้ แล้วสต๊อกเปลี่ยน)
+  React.useEffect(() => {
+    for (const it of cartItems) {
+      const id = getId(it);
+      const stock = getStock(it);
+      const qty = getQty(it);
+      if (Number.isFinite(stock) && qty > stock) {
+        setQty(id, Math.max(0, stock)); // 0 = หมด → ปิดปุ่ม + แจ้งผู้ใช้เองได้
+      }
     }
+  }, [cartItems, setQty]);
+
+  const handleCheckout = () => {
+    if (!user) navigate('/get-started', { state: { from: '/checkout' } });
+    else navigate('/checkout');
   };
 
   return (
@@ -81,13 +96,15 @@ export default function CartPage() {
           {/* ซ้าย: รายการสินค้า */}
           <div className="md:col-span-2 space-y-4">
             {cartItems.map((item) => {
-              const id = getId(item); // เป็น unique id อยู่แล้ว
+              const id = getId(item);
               const qty = getQty(item);
               const unit = getUnitPrice(item);
               const name = getName(item);
               const img = getImage(item);
               const link = detailLink(item);
               const type = getType(item);
+              const stock = getStock(item);
+              const outOfStock = Number.isFinite(stock) && stock <= 0;
 
               return (
                 <div key={id} className="bg-white border rounded-2xl p-4 shadow-sm hover:shadow-md transition">
@@ -112,15 +129,31 @@ export default function CartPage() {
                             <span className="px-2 py-0.5 rounded-full border text-xs">
                               {type === 'rabbit' ? 'กระต่าย' : type === 'pet-food' ? 'อาหารสัตว์' : 'อุปกรณ์'}
                             </span>
+
+                            {/* ✅ แสดงคงเหลือถ้ามีข้อมูล */}
+                            {Number.isFinite(stock) && (
+                              <>
+                                <span>•</span>
+                                {outOfStock ? (
+                                  <span className="text-rose-600">สินค้าหมด</span>
+                                ) : (
+                                  <span className="text-slate-600">
+                                    คงเหลือ <b>{stock}</b>
+                                  </span>
+                                )}
+                              </>
+                            )}
+
                             <span>•</span>
 
-                            {/* ตัวควบคุมจำนวน */}
+                            {/* ตัวควบคุมจำนวน (ล็อกตามสต๊อก) */}
                             <div className="flex items-center gap-2">
                               <button
                                 onClick={() => decrement(id)}
-                                className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-neutral-50"
+                                className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-neutral-50 disabled:opacity-50"
                                 aria-label="ลดจำนวน"
                                 title="ลดจำนวน"
+                                disabled={outOfStock || qty <= 1}
                               >
                                 –
                               </button>
@@ -128,24 +161,31 @@ export default function CartPage() {
                               <input
                                 type="number"
                                 min={1}
-                                value={qty}
+                                max={Number.isFinite(stock) ? stock : undefined}
+                                value={outOfStock ? 0 : qty}
                                 onChange={(e) => {
                                   const val = e.target.value;
                                   if (val === '') return; // ปล่อยว่างชั่วคราว
-                                  const n = Math.max(0, Number(val) || 0);
+                                  let n = Math.max(0, Number(val) || 0);
+                                  if (Number.isFinite(stock)) n = Math.min(stock, n); // ✅ clamp ตามสต๊อก
                                   setQty(id, n);
                                 }}
                                 onBlur={(e) => {
-                                  if (e.target.value === '') setQty(id, 1);
+                                  // คืนค่าอย่างน้อย 1 ถ้ายังมีของ
+                                  if (e.target.value === '' && !outOfStock) setQty(id, 1);
                                 }}
-                                className="w-14 text-center border rounded-lg py-1"
+                                className="w-14 text-center border rounded-lg py-1 disabled:opacity-50"
+                                disabled={outOfStock}
                               />
 
                               <button
-                                onClick={() => increment(id)}
-                                className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-neutral-50"
+                                onClick={() => {
+                                  if (!Number.isFinite(stock) || qty < stock) increment(id);
+                                }}
+                                className="w-8 h-8 rounded-full border flex items-center justify-center hover:bg-neutral-50 disabled:opacity-50"
                                 aria-label="เพิ่มจำนวน"
                                 title="เพิ่มจำนวน"
+                                disabled={outOfStock || (Number.isFinite(stock) && qty >= stock)}
                               >
                                 +
                               </button>

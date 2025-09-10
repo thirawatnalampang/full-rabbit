@@ -99,8 +99,9 @@ app.post('/api/upload', uploadProfile.single('profileImage'), (req, res) => {
   const url = `http://localhost:${port}/uploads/${req.file.filename}`;
   res.json({ url });
 });
+// ========== RABBIT STOCK APIs ==========
 
-/* ========= Rabbit APIs ========= */
+// 📌 ดึงรายการกระต่าย (พร้อมสต๊อก)
 app.get('/api/admin/rabbits', async (req, res) => {
   try {
     const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
@@ -112,35 +113,44 @@ app.get('/api/admin/rabbits', async (req, res) => {
 
     const rowsQ = await pool.query(
       `SELECT rabbit_id, seller_id, name, breed, age, gender, price,
-              description, image_url, status
+              description, image_url, status, stock
        FROM rabbits
        ORDER BY rabbit_id ASC
        LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
 
-    res.json({ page, limit, total, totalPages: Math.ceil(total / limit), items: rowsQ.rows });
+    res.json({
+      page,
+      limit,
+      total,
+      totalPages: Math.ceil(total / limit),
+      items: rowsQ.rows
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
+
+// 📌 เพิ่มกระต่ายใหม่ (กำหนด stock ได้ด้วย)
 app.post('/api/admin/rabbits', async (req, res) => {
   try {
     const {
       seller_id = null, name, breed = null, age = null, gender = null,
-      price, description = null, image_url = null, status = 'available'
+      price, description = null, image_url = null, status = 'available',
+      stock = 0
     } = req.body;
 
     if (!name || price == null)
       return res.status(400).json({ error: 'name และ price จำเป็น' });
 
     const q = await pool.query(
-      `INSERT INTO rabbits (seller_id, name, breed, age, gender, price, description, image_url, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       RETURNING rabbit_id, seller_id, name, breed, age, gender, price, description, image_url, status`,
-      [seller_id, name, breed, age, gender, price, description, image_url, status]
+      `INSERT INTO rabbits (seller_id, name, breed, age, gender, price, description, image_url, status, stock)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+       RETURNING rabbit_id, seller_id, name, breed, age, gender, price, description, image_url, status, stock`,
+      [seller_id, name, breed, age, gender, price, description, image_url, status, stock]
     );
     res.status(201).json(q.rows[0]);
   } catch (e) {
@@ -149,25 +159,28 @@ app.post('/api/admin/rabbits', async (req, res) => {
   }
 });
 
+
+// 📌 อัปเดตข้อมูลกระต่าย (รวมถึง stock)
 app.put('/api/admin/rabbits/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { seller_id, name, breed, age, gender, price, description, image_url, status } = req.body;
+    const { seller_id, name, breed, age, gender, price, description, image_url, status, stock } = req.body;
 
     const q = await pool.query(
       `UPDATE rabbits SET
-         seller_id = COALESCE($1, seller_id),
-         name      = COALESCE($2, name),
-         breed     = COALESCE($3, breed),
-         age       = COALESCE($4, age),
-         gender    = COALESCE($5, gender),
-         price     = COALESCE($6, price),
+         seller_id   = COALESCE($1, seller_id),
+         name        = COALESCE($2, name),
+         breed       = COALESCE($3, breed),
+         age         = COALESCE($4, age),
+         gender      = COALESCE($5, gender),
+         price       = COALESCE($6, price),
          description = COALESCE($7, description),
-         image_url = COALESCE($8, image_url),
-         status    = COALESCE($9, status)
-       WHERE rabbit_id = $10
-       RETURNING rabbit_id, seller_id, name, breed, age, gender, price, description, image_url, status`,
-      [seller_id, name, breed, age, gender, price, description, image_url, status, id]
+         image_url   = COALESCE($8, image_url),
+         status      = COALESCE($9, status),
+         stock       = COALESCE($10, stock)
+       WHERE rabbit_id = $11
+       RETURNING rabbit_id, seller_id, name, breed, age, gender, price, description, image_url, status, stock`,
+      [seller_id, name, breed, age, gender, price, description, image_url, status, stock, id]
     );
     if (q.rowCount === 0) return res.status(404).json({ error: 'not found' });
     res.json(q.rows[0]);
@@ -177,6 +190,8 @@ app.put('/api/admin/rabbits/:id', async (req, res) => {
   }
 });
 
+
+// 📌 ลบกระต่าย
 app.delete('/api/admin/rabbits/:id', async (req, res) => {
   try {
     const q = await pool.query('DELETE FROM rabbits WHERE rabbit_id = $1', [req.params.id]);
@@ -187,6 +202,56 @@ app.delete('/api/admin/rabbits/:id', async (req, res) => {
     res.status(500).json({ error: 'Server error' });
   }
 });
+
+
+// 📌 อัปเดตสต๊อกโดยตรง (เพิ่ม/ลดทีหลัง)
+app.patch('/api/admin/rabbits/:id/stock', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { change } = req.body; // change = +1 / -1 / +5 / -3
+
+    if (!Number.isInteger(change)) {
+      return res.status(400).json({ error: 'change ต้องเป็นจำนวนเต็ม' });
+    }
+
+    // ป้องกัน stock < 0
+    const q = await pool.query(
+      `UPDATE rabbits
+       SET stock = stock + $1
+       WHERE rabbit_id = $2 AND stock + $1 >= 0
+       RETURNING rabbit_id, stock`,
+      [change, id]
+    );
+
+    if (q.rowCount === 0) {
+      return res.status(400).json({ error: 'ไม่สามารถอัปเดต stock (อาจติดลบหรือไม่พบ id)' });
+    }
+
+    res.json(q.rows[0]);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// GET /api/admin/rabbits/:id
+app.get('/api/admin/rabbits/:id', async (req, res) => {
+  try {
+    const q = await pool.query(
+      `SELECT rabbit_id, seller_id, name, breed, age, gender, price,
+       description, image_url, status, stock
+FROM rabbits
+WHERE rabbit_id = $1`,
+      [req.params.id]
+    );
+    if (q.rowCount === 0) return res.status(404).json({ error: 'not found' });
+    res.json(q.rows[0]);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
 
 /* ========= Product APIs ========= */
 app.get('/api/admin/products', async (req, res) => {
@@ -575,10 +640,26 @@ app.delete('/api/users/:id', async (req, res) => {
   }
 });
 
-/* =============== สั่งซื้อ: POST /api/orders =============== */
+/* =============== สั่งซื้อ: POST /api/orders (ตัดสต๊อกแบบ transactional) =============== */
+const toNum = (v) => {
+  const n = Number(v);
+  return Number.isFinite(n) ? n : 0;
+};
+// เผื่อส่งมาจากฟรอนต์ต่างรูปแบบ
+const getQty = (it) => Math.max(1, toNum(it.qty ?? it.quantity ?? 1));
+const getUnitPrice = (it) => toNum(it.unit_price ?? it.price ?? 0);
+const getType = (it) => String(it.type || '').toLowerCase();
+const getIdNum = (it) => {
+  const raw = it.rabbit_id ?? it.product_id ?? it.base_id ?? it.id;
+  const m = typeof raw === 'string' ? raw.match(/\d+/)?.[0] : raw;
+  const n = Number(m);
+  return Number.isFinite(n) ? n : null;
+};
+
 app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
   const client = await pool.connect();
   try {
+    // -------- parse body + slip --------
     let body;
     let slipPath = null;
 
@@ -599,15 +680,77 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
     if (!payment?.method) return res.status(400).json({ message: 'ระบุ payment.method' });
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'ไม่มีสินค้า' });
 
-    const subtotal = num(summary?.subtotal);
-    const discount = num(summary?.discount);
-    const shippingFee = num(shipping?.fee);
-    const total = num(summary?.total);
+    // -------- สรุปยอด --------
+    const subtotal = toNum(summary?.subtotal);
+    const discount = toNum(summary?.discount);
+    const shippingFee = toNum(shipping?.fee);
+    const total = toNum(summary?.total);
     const currency = summary?.currency || 'THB';
     const paymentStatus = payment?.status || (slipPath ? 'submitted' : 'unpaid');
 
+    // -------- เริ่มทรานแซกชัน --------
     await client.query('BEGIN');
 
+    // 1) ล็อกสต๊อก & ตรวจพอหรือไม่ (SELECT ... FOR UPDATE)
+    const shortages = []; // [{type, id, need, have}]
+    const lockedRows = []; // เก็บข้อมูลไว้ใช้ตอนอัปเดต
+
+    for (const it of items) {
+      const type = getType(it);
+      const baseId = getIdNum(it);
+      const need = getQty(it);
+
+      if (!baseId || need <= 0) {
+        shortages.push({ type, id: baseId || '(invalid id)', need, have: 0 });
+        continue;
+      }
+
+      if (type === 'rabbit') {
+        const q = await client.query(
+          'SELECT rabbit_id, stock, status FROM rabbits WHERE rabbit_id = $1 FOR UPDATE',
+          [baseId]
+        );
+        if (q.rowCount === 0) {
+          shortages.push({ type, id: baseId, need, have: 0 });
+          continue;
+        }
+        const row = q.rows[0];
+        const have = Number(row.stock || 0);
+        if (have < need) {
+          shortages.push({ type, id: baseId, need, have });
+          continue;
+        }
+        lockedRows.push({ type, id: baseId, have, need });
+      } else {
+        // product: pet-food / equipment
+        const q = await client.query(
+          'SELECT product_id, stock, status FROM products WHERE product_id = $1 FOR UPDATE',
+          [baseId]
+        );
+        if (q.rowCount === 0) {
+          shortages.push({ type, id: baseId, need, have: 0 });
+          continue;
+        }
+        const row = q.rows[0];
+        const have = Number(row.stock || 0);
+        if (have < need) {
+          shortages.push({ type, id: baseId, need, have });
+          continue;
+        }
+        lockedRows.push({ type, id: baseId, have, need });
+      }
+    }
+
+    if (shortages.length > 0) {
+      // มีของไม่พอ -> ยกเลิกทรานแซกชัน
+      await client.query('ROLLBACK');
+      return res.status(409).json({
+        message: 'จำนวนสินค้าไม่พอ',
+        shortages, // บอกตัวไหนขาด/เหลือเท่าไหร่
+      });
+    }
+
+    // 2) บันทึกหัวออเดอร์
     const insertOrderSql = `
       INSERT INTO orders (
         buyer_id, order_date,
@@ -645,155 +788,49 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
     const { rows } = await client.query(insertOrderSql, insertOrderVals);
     const orderId = rows[0].order_id;
 
+    // 3) บันทึกรายการย่อย + ตัดสต๊อก
     const insertDetailSql = `
       INSERT INTO order_details (order_id, item_type, item_id, quantity, price)
       VALUES ($1, $2, $3, $4, $5)
     `;
+
     for (const it of items) {
-      const itemId = Number(it.base_id ?? it.id);
+      const type = getType(it);
+      const baseId = getIdNum(it);
+      const qty = getQty(it);
+      const price = getUnitPrice(it);
+
+      // insert detail
       await client.query(insertDetailSql, [
         orderId,
-        String(it.type || '').toLowerCase(),
-        Number.isFinite(itemId) ? itemId : null,
-        Number(it.qty || 1),
-        num(it.unit_price || 0),
+        type,
+        baseId,
+        qty,
+        price,
       ]);
+
+      // deduct stock (อัปเดตในตารางที่ถูกต้อง)
+      if (type === 'rabbit') {
+        await client.query(
+          `UPDATE rabbits
+             SET stock = stock - $2,
+                 status = CASE WHEN stock - $2 <= 0 THEN 'reserved' ELSE status END
+           WHERE rabbit_id = $1`,
+          [baseId, qty]
+        );
+      } else {
+        await client.query(
+          `UPDATE products
+             SET stock = stock - $2,
+                 status = CASE WHEN stock - $2 <= 0 THEN 'out_of_stock' ELSE status END
+           WHERE product_id = $1`,
+          [baseId, qty]
+        );
+      }
     }
 
     await client.query('COMMIT');
     res.json({ status: 'ok', order_id: orderId, total_amount: total, currency });
-  } catch (err) {
-    await client.query('ROLLBACK');
-    console.error('create order error:', err);
-    res.status(500).json({ message: 'create order failed' });
-  } finally {
-    client.release();
-  }
-});
-
-
-
-/* ========= Helpers ========== */
-function normalizeType(raw) {
-  const t = String(raw || '').toLowerCase().trim();
-  if (t === 'pet_food' || t === 'petfood') return 'pet-food';
-  if (t === 'equipment' || t === 'equip') return 'equipment';
-  if (t === 'rabbit' || t === 'rabbits') return 'rabbit';
-  return t || 'unknown';
-}
-function genOrderCode() {
-  const datePart = new Date().toISOString().slice(0,10).replace(/-/g, '');
-  const rand4 = Math.floor(1000 + Math.random() * 9000);
-  return `ORD-${datePart}-${rand4}`;
-}
-
-/* ========= สั่งซื้อ: POST /api/orders ========= */
-app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
-  const client = await pool.connect();
-  try {
-    let body; let slipPath = null;
-
-    if (req.is('multipart/form-data')) {
-      if (!req.body?.order) return res.status(400).json({ message: "missing 'order' json" });
-      body = JSON.parse(req.body.order);
-      if (!req.file) return res.status(400).json({ message: 'ต้องแนบไฟล์สลิป (field: slip)' });
-      slipPath = `/uploads/slips/${req.file.filename}`;
-    } else if (req.is('application/json')) {
-      body = req.body;
-    } else {
-      return res.status(415).json({ message: 'Unsupported Content-Type' });
-    }
-
-    const { user_id, contact, shipping, payment, note, items = [], summary } = body || {};
-    if (!contact?.full_name || !contact?.phone) return res.status(400).json({ message: 'กรอกชื่อ/เบอร์ให้ครบ' });
-    if (!shipping?.method) return res.status(400).json({ message: 'ระบุ shipping.method' });
-    if (!payment?.method) return res.status(400).json({ message: 'ระบุ payment.method' });
-    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'ไม่มีสินค้า' });
-
-    const subtotal    = Number(summary?.subtotal || 0);
-    const discount    = Number(summary?.discount || 0);
-    const shippingFee = Number(shipping?.fee || 0);
-    const total       = Number(summary?.total || 0);
-    const currency    = summary?.currency || 'THB';
-    const paymentStatus = payment?.status || (slipPath ? 'submitted' : 'unpaid');
-    const orderCode = genOrderCode();
-
-    await client.query('BEGIN');
-
-    const head = await client.query(
-      `INSERT INTO orders (
-        order_code, buyer_id, order_date, total_amount, status,
-        contact_full_name, contact_phone,
-        shipping_method, shipping_address, shipping_fee,
-        payment_method, payment_status, payment_slip_path,
-        note, subtotal, discount, currency
-      ) VALUES ($1,$2,NOW(),$3,'pending',$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-      RETURNING order_id, order_code`,
-      [
-        orderCode,
-        user_id ?? null,
-        total,
-        contact.full_name,
-        contact.phone,
-        shipping.method,
-        shipping.address ? JSON.stringify(shipping.address) : null,
-        shippingFee,
-        payment.method,
-        paymentStatus,
-        slipPath,
-        note || null,
-        subtotal,
-        discount,
-        currency,
-      ]
-    );
-    const orderId = head.rows[0].order_id;
-
-    const insertDetail = `
-      INSERT INTO order_details (order_id, item_type, item_id, quantity, price)
-      VALUES ($1,$2,$3,$4,$5)
-    `;
-
-    for (const raw of items) {
-  const itemType = normalizeType(raw.type);
-
-  let itemIdRaw;
-  if (itemType === 'rabbit') {
-    itemIdRaw = raw.rabbit_id ?? raw.base_id ?? raw.id;
-  } else {
-    itemIdRaw = raw.product_id ?? raw.base_id ?? raw.id;
-  }
-
-  if (itemIdRaw == null) {
-    await client.query('ROLLBACK');
-    return res.status(400).json({ message: 'missing item_id in order items', item: raw });
-  }
-
-  const itemId = Number(itemIdRaw);
-
-  if (!['rabbit','pet-food','equipment'].includes(itemType)) {
-    await client.query('ROLLBACK');
-    return res.status(400).json({ message: 'invalid item_type', item: raw });
-  }
-
-  if (!Number.isInteger(itemId) || itemId <= 0) {
-    await client.query('ROLLBACK');
-    console.warn('Bad item id', { itemType, itemIdRaw, raw }); // <-- log ชัด ๆ
-    return res.status(400).json({ message: 'invalid item_id in order items', item: raw });
-  }
-
-  await client.query(insertDetail, [
-    orderId,
-    itemType,
-    itemId,
-    Number(raw.qty || 1),
-    Number(raw.unit_price || 0),
-  ]);
-}
-
-
-    await client.query('COMMIT');
-    res.json({ status: 'ok', order_id: orderId, order_code: head.rows[0].order_code, total_amount: total, currency });
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('create order error:', err);
