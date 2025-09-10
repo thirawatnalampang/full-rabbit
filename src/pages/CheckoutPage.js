@@ -70,7 +70,7 @@ function toOrderItem(it) {
 
 /* ---------- config ---------- */
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000";
-const SHIPPING_THRESHOLD = 1000;
+const SHIPPING_THRESHOLD = 1500;
 const SHIPPING_STD = 50;
 const SHIPPING_EXPRESS = 90;
 
@@ -260,7 +260,6 @@ export default function CheckoutPage() {
                   มารับเองที่ร้าน – ฟรี
                 </label>
               </div>
-
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-neutral-600 mb-1">ชื่อ-นามสกุล</label>
