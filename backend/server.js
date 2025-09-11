@@ -101,7 +101,6 @@ app.post('/api/upload', uploadProfile.single('profileImage'), (req, res) => {
 });
 // ========== RABBIT STOCK APIs ==========
 
-// 📌 ดึงรายการกระต่าย (พร้อมสต๊อก)
 app.get('/api/admin/rabbits', async (req, res) => {
   try {
     const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
@@ -112,45 +111,46 @@ app.get('/api/admin/rabbits', async (req, res) => {
     const total = totalQ.rows[0].total || 0;
 
     const rowsQ = await pool.query(
-      `SELECT rabbit_id, seller_id, name, breed, age, gender, price,
-              description, image_url, status, stock
+      `SELECT rabbit_id, name, breed, age, gender, price,
+              description, image_url, status, stock,
+              is_parent, parent_role, available_date, weight
        FROM rabbits
        ORDER BY rabbit_id ASC
        LIMIT $1 OFFSET $2`,
       [limit, offset]
     );
 
-    res.json({
-      page,
-      limit,
-      total,
-      totalPages: Math.ceil(total / limit),
-      items: rowsQ.rows
-    });
+    res.json({ page, limit, total, totalPages: Math.ceil(total / limit), items: rowsQ.rows });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-
-// 📌 เพิ่มกระต่ายใหม่ (กำหนด stock ได้ด้วย)
 app.post('/api/admin/rabbits', async (req, res) => {
   try {
     const {
-      seller_id = null, name, breed = null, age = null, gender = null,
+      name, breed = null, age = null, gender = null,
       price, description = null, image_url = null, status = 'available',
-      stock = 0
+      stock = 0,
+      // ฟิลด์ breeding
+      is_parent = false, parent_role = null, available_date = null, weight = null
     } = req.body;
 
     if (!name || price == null)
       return res.status(400).json({ error: 'name และ price จำเป็น' });
 
     const q = await pool.query(
-      `INSERT INTO rabbits (seller_id, name, breed, age, gender, price, description, image_url, status, stock)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-       RETURNING rabbit_id, seller_id, name, breed, age, gender, price, description, image_url, status, stock`,
-      [seller_id, name, breed, age, gender, price, description, image_url, status, stock]
+      `INSERT INTO rabbits (
+         name, breed, age, gender, price, description, image_url, status, stock,
+         is_parent, parent_role, available_date, weight
+       )
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+       RETURNING rabbit_id, name, breed, age, gender, price,
+                 description, image_url, status, stock,
+                 is_parent, parent_role, available_date, weight`,
+      [name, breed, age, gender, price, description, image_url, status, stock,
+       is_parent, parent_role, available_date, weight]
     );
     res.status(201).json(q.rows[0]);
   } catch (e) {
@@ -160,27 +160,35 @@ app.post('/api/admin/rabbits', async (req, res) => {
 });
 
 
-// 📌 อัปเดตข้อมูลกระต่าย (รวมถึง stock)
 app.put('/api/admin/rabbits/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { seller_id, name, breed, age, gender, price, description, image_url, status, stock } = req.body;
+    const {
+      name, breed, age, gender, price, description, image_url, status, stock,
+      is_parent, parent_role, available_date, weight
+    } = req.body;
 
     const q = await pool.query(
       `UPDATE rabbits SET
-         seller_id   = COALESCE($1, seller_id),
-         name        = COALESCE($2, name),
-         breed       = COALESCE($3, breed),
-         age         = COALESCE($4, age),
-         gender      = COALESCE($5, gender),
-         price       = COALESCE($6, price),
-         description = COALESCE($7, description),
-         image_url   = COALESCE($8, image_url),
-         status      = COALESCE($9, status),
-         stock       = COALESCE($10, stock)
-       WHERE rabbit_id = $11
-       RETURNING rabbit_id, seller_id, name, breed, age, gender, price, description, image_url, status, stock`,
-      [seller_id, name, breed, age, gender, price, description, image_url, status, stock, id]
+         name        = COALESCE($1, name),
+         breed       = COALESCE($2, breed),
+         age         = COALESCE($3, age),
+         gender      = COALESCE($4, gender),
+         price       = COALESCE($5, price),
+         description = COALESCE($6, description),
+         image_url   = COALESCE($7, image_url),
+         status      = COALESCE($8, status),
+         stock       = COALESCE($9, stock),
+         is_parent   = COALESCE($10, is_parent),
+         parent_role = COALESCE($11, parent_role),
+         available_date = COALESCE($12, available_date),
+         weight      = COALESCE($13, weight)
+       WHERE rabbit_id = $14
+       RETURNING rabbit_id, name, breed, age, gender, price,
+                 description, image_url, status, stock,
+                 is_parent, parent_role, available_date, weight`,
+      [name, breed, age, gender, price, description, image_url, status, stock,
+       is_parent, parent_role, available_date, weight, id]
     );
     if (q.rowCount === 0) return res.status(404).json({ error: 'not found' });
     res.json(q.rows[0]);
@@ -234,14 +242,14 @@ app.patch('/api/admin/rabbits/:id/stock', async (req, res) => {
   }
 });
 
-// GET /api/admin/rabbits/:id
 app.get('/api/admin/rabbits/:id', async (req, res) => {
   try {
     const q = await pool.query(
-      `SELECT rabbit_id, seller_id, name, breed, age, gender, price,
-       description, image_url, status, stock
-FROM rabbits
-WHERE rabbit_id = $1`,
+      `SELECT rabbit_id, name, breed, age, gender, price,
+              description, image_url, status, stock,
+              is_parent, parent_role, available_date, weight
+       FROM rabbits
+       WHERE rabbit_id = $1`,
       [req.params.id]
     );
     if (q.rowCount === 0) return res.status(404).json({ error: 'not found' });
@@ -251,6 +259,7 @@ WHERE rabbit_id = $1`,
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 
 /* ========= Product APIs ========= */
@@ -276,7 +285,7 @@ app.get('/api/admin/products', async (req, res) => {
         [category]
       );
       rowsQ = await pool.query(
-        `SELECT product_id, seller_id, name, category, price, stock, description, image_url, status
+        `SELECT product_id, name, category, price, stock, description, image_url, status
          FROM products
          WHERE LOWER(category) = LOWER($1)
          ORDER BY product_id ASC
@@ -286,7 +295,7 @@ app.get('/api/admin/products', async (req, res) => {
     } else {
       totalQ = await pool.query('SELECT COUNT(*)::int AS total FROM products');
       rowsQ = await pool.query(
-        `SELECT product_id, seller_id, name, category, price, stock, description, image_url, status
+        `SELECT product_id, name, category, price, stock, description, image_url, status
          FROM products
          ORDER BY product_id ASC
          LIMIT $1 OFFSET $2`,
@@ -302,11 +311,14 @@ app.get('/api/admin/products', async (req, res) => {
   }
 });
 
+// ===== CREATE PRODUCT =====
 app.post('/api/admin/products', async (req, res) => {
   try {
     const {
-      seller_id = null, name, category, price, stock = 0,
-      description = null, image_url = null, status = 'available'
+      name, category, price, stock,
+      description = null,
+      image_url = null,
+      status = 'available'
     } = req.body;
 
     if (!name || !price || !category) {
@@ -314,40 +326,59 @@ app.post('/api/admin/products', async (req, res) => {
     }
 
     const q = await pool.query(
-      `INSERT INTO products (seller_id, name, category, price, stock, description, image_url, status)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)
+      `INSERT INTO products (name, category, price, stock, description, image_url, status, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,NOW(),NOW())
        RETURNING *`,
-      [seller_id, name, category, price, stock, description, image_url, status]
+      [name, category, price, stock, description, image_url, status]
     );
 
     res.status(201).json(q.rows[0]);
   } catch (e) {
-    console.error(e);
+    console.error('POST /api/admin/products', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
+
+// PUT /api/admin/products/:id
 app.put('/api/admin/products/:id', async (req, res) => {
   try {
-    const { id } = req.params;
-    const { seller_id, name, category, price, stock, description, image_url, status } = req.body;
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: 'invalid product id' });
+    }
+
+    // ดึงค่าจาก body (ถ้าไม่ได้ส่งมาก็ปล่อยเป็น null ให้ COALESCE ข้าม)
+    let {
+      name = null,
+      category = null,
+      price = null,
+      stock = null,
+      description = null,
+      image_url = null,
+      status = null,
+    } = req.body || {};
+
+    // กัน NaN สำหรับ number fields
+    price = Number.isFinite(Number(price)) ? Number(price) : null;
+    stock = Number.isInteger(Number(stock)) ? Number(stock) : null;
 
     const q = await pool.query(
       `UPDATE products SET
-         seller_id = COALESCE($1, seller_id),
-         name = COALESCE($2, name),
-         category = COALESCE($3, category),
-         price = COALESCE($4, price),
-         stock = COALESCE($5, stock),
-         description = COALESCE($6, description),
-         image_url = COALESCE($7, image_url),
-         status = COALESCE($8, status)
-       WHERE product_id = $9
+         name        = COALESCE($1, name),
+         category    = COALESCE($2, category),
+         price       = COALESCE($3, price),
+         stock       = COALESCE($4, stock),
+         description = COALESCE($5, description),
+         image_url   = COALESCE($6, image_url),
+         status      = COALESCE($7, status),
+         updated_at  = NOW()
+       WHERE product_id = $8
        RETURNING *`,
-      [seller_id, name, category, price, stock, description, image_url, status, id]
+      [name, category, price, stock, description, image_url, status, id]
     );
 
-    if (q.rowCount === 0) return res.status(404).json({ error: 'not found' });
+    if (!q.rowCount) return res.status(404).json({ error: 'not found' });
     res.json(q.rows[0]);
   } catch (e) {
     console.error(e);
@@ -1380,5 +1411,866 @@ app.delete("/api/admin/users/:id", async (req, res) => {
     client.release();
   }
 });
+
+// ========= Parents (breeding rabbits) =========
+
+// GET /api/parents
+app.get('/api/parents', async (req, res) => {
+  try {
+    const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.max(parseInt(req.query.limit || '12', 10), 1);
+    const offset = (page - 1) * limit;
+
+    const gender = (req.query.gender || '').toLowerCase();
+    const search = (req.query.search || '').trim();
+
+    const where = ['is_parent = true'];
+    const params = [];
+    let idx = 1;
+
+    if (gender === 'male' || gender === 'female') {
+      where.push(`LOWER(gender) = $${idx++}`);
+      params.push(gender);
+    }
+    if (search) {
+      where.push(`(LOWER(name) LIKE $${idx} OR LOWER(breed) LIKE $${idx})`);
+      params.push(`%${search.toLowerCase()}%`);
+      idx++;
+    }
+
+    const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const totalQ = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM rabbits ${whereSql}`, params
+    );
+    const total = totalQ.rows[0].total || 0;
+
+    const rowsQ = await pool.query(
+      `SELECT rabbit_id, name, breed, age, weight, gender,
+              image_url, parent_role, available_date, price,
+          status, stock
+       FROM rabbits
+       ${whereSql}
+       ORDER BY rabbit_id DESC
+       LIMIT $${idx} OFFSET $${idx + 1}`,
+      [...params, limit, offset]
+    );
+
+    res.json({ page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)), items: rowsQ.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+/* ========= Parents (สต๊อก) ========= */
+
+// GET /api/parents
+app.get('/api/parents', async (req, res) => {
+  try {
+    const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.max(parseInt(req.query.limit || '12', 10), 1);
+    const offset = (page - 1) * limit;
+
+    const gender = (req.query.gender || '').toLowerCase();
+    const search = (req.query.search || '').trim();
+
+    const where = ['is_parent = true'];
+    const params = [];
+    let i = 1;
+
+    if (gender === 'male' || gender === 'female') {
+      where.push(`LOWER(gender) = $${i++}`); params.push(gender);
+    }
+    if (search) {
+      where.push(`(LOWER(name) LIKE $${i} OR LOWER(breed) LIKE $${i})`);
+      params.push(`%${search.toLowerCase()}%`); i++;
+    }
+
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const totalQ = await pool.query(`SELECT COUNT(*)::int AS total FROM rabbits ${whereSql}`, params);
+    const total = totalQ.rows[0]?.total || 0;
+
+    const rowsQ = await pool.query(
+      `SELECT rabbit_id, name, breed, age, weight, gender, image_url,
+              parent_role, available_date, price, status, stock
+         FROM rabbits
+        ${whereSql}
+        ORDER BY rabbit_id DESC
+        LIMIT $${i} OFFSET $${i+1}`,
+      [...params, limit, offset]
+    );
+
+    res.json({ page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)), items: rowsQ.rows });
+  } catch (e) {
+    console.error(e); res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- ลูกค้าดูของตัวเอง (ต้องล็อกอินในโปรดักชัน; dev อนุโลม ?buyer_id=) ---
+app.get('/api/my-breeding-loans/me', async (req, res) => {
+  try {
+    // ถ้ามีระบบแนบ user (เช่น attachUser ที่อ่าน jwt/cookie) จะได้ req.user.user_id
+    let uid = req.user?.user_id;
+
+    // เผื่อโหมด dev ยังไม่มี auth: ลองอ่านจาก query ?buyer_id=
+    if (!uid && typeof req.query.buyer_id !== 'undefined') {
+      const qid = Number(req.query.buyer_id);
+      if (Number.isFinite(qid)) uid = qid;
+    }
+
+    if (!uid) {
+      return res.status(401).json({ error: 'unauthenticated' });
+    }
+
+    const itemsQ = await pool.query(
+      `SELECT bl.loan_id, bl.rabbit_id, bl.borrower_name,
+              bl.start_date, bl.end_date, bl.status, bl.payment_status,
+              bl.total_price,
+              bl.return_requested, bl.return_requested_at,
+              bl.return_method, bl.return_from_text, bl.return_carrier, bl.return_tracking_code, bl.pickup_time, bl.return_note,
+              bl.ship_carrier, bl.ship_tracking_code, bl.shipped_at,
+              r.name AS rabbit_name, r.image_url AS rabbit_image, r.gender
+       FROM breeding_loans bl
+       JOIN rabbits r ON r.rabbit_id = bl.rabbit_id
+       WHERE bl.borrower_user_id = $1
+       ORDER BY bl.loan_id DESC`, [uid]);
+
+    const sumQ = await pool.query(
+      `SELECT
+         COUNT(*)::int AS count,
+         COALESCE(SUM(total_price),0)::numeric AS total_spent,
+         SUM((status='on_loan')::int)::int     AS on_loan,
+         SUM((status='returned')::int)::int    AS returned,
+         SUM((status='requested')::int)::int   AS requested,
+         SUM((status='approved')::int)::int    AS approved,
+         SUM((status='cancelled')::int)::int   AS cancelled
+       FROM breeding_loans
+       WHERE borrower_user_id=$1`, [uid]);
+
+    return res.json({ summary: sumQ.rows[0], items: itemsQ.rows });
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'Server error' });
+  }
+});
+
+// --- Parents (ใช้ stock-model) ---
+app.get('/api/parents', async (req, res) => {
+  try {
+    const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.max(parseInt(req.query.limit || '12', 10), 1);
+    const offset = (page - 1) * limit;
+
+    const gender = (req.query.gender || '').toLowerCase();
+    const search = (req.query.search || '').trim();
+
+    const where = ['is_parent = true'];
+    const vals = [];
+    if (gender === 'male' || gender === 'female') {
+      vals.push(gender); where.push(`LOWER(gender) = $${vals.length}`);
+    }
+    if (search) {
+      vals.push(`%${search.toLowerCase()}%`);
+      where.push(`(LOWER(name) LIKE $${vals.length} OR LOWER(breed) LIKE $${vals.length})`);
+    }
+    const whereSql = 'WHERE ' + where.join(' AND ');
+
+    const totalQ = await pool.query(`SELECT COUNT(*)::int AS total FROM rabbits ${whereSql}`, vals);
+    const total = totalQ.rows[0]?.total || 0;
+
+    vals.push(limit, offset);
+    const rowsQ = await pool.query(
+      `SELECT rabbit_id, name, breed, age, weight, gender, image_url, parent_role,
+              available_date, price, status, stock
+       FROM rabbits
+       ${whereSql}
+       ORDER BY rabbit_id DESC
+       LIMIT $${vals.length-1} OFFSET $${vals.length}`, vals);
+
+    res.json({ page, limit, total, totalPages: Math.max(1, Math.ceil(total/limit)), items: rowsQ.rows });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+app.get('/api/parents/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const q = await pool.query(
+      `SELECT rabbit_id, name, breed, age, weight, gender, price,
+              image_url, status, parent_role, available_date, stock
+       FROM rabbits
+       WHERE is_parent = TRUE AND rabbit_id = $1`, [id]);
+    if (!q.rowCount) return res.status(404).json({ error: 'not found' });
+    res.json(q.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+// --- ลูกค้าสร้างการยืม (ไม่ตัด stock ที่นี่แล้ว) ---
+app.post('/api/breeding-loans', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const {
+      rabbit_id,
+      borrower_name,
+      borrower_phone = null,
+      borrower_address = null,
+      start_date,
+      end_date,
+      notes = null,
+      total_price = null,
+      payment_method: pmFromBody,   // 👈 รับมาจากฟรอนต์
+      user_id: userIdFromBody,
+    } = req.body || {};
+
+    // normalize payment_method ให้เป็นชุดค่าที่รองรับ
+    const ALLOWED_PM = new Set(['cod','bank_transfer','wallet','cash']);
+    let payment_method = pmFromBody ? String(pmFromBody).toLowerCase() : null;
+    if (payment_method && !ALLOWED_PM.has(payment_method)) payment_method = null;
+
+    const borrower_user_id = Number.isFinite(Number(userIdFromBody))
+      ? Number(userIdFromBody)
+      : (req.user?.user_id || null);
+
+    await client.query('BEGIN');
+
+    const rq = await client.query(
+      `SELECT is_parent, COALESCE(stock,0) AS stock, status
+         FROM rabbits
+        WHERE rabbit_id=$1 FOR UPDATE`,
+      [rabbit_id]
+    );
+    if (!rq.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error:'rabbit not found' }); }
+    const rb = rq.rows[0];
+    if (!rb.is_parent) { await client.query('ROLLBACK'); return res.status(400).json({ error:'rabbit is not marked as parent' }); }
+    if (rb.status === 'out_of_stock' && rb.stock <= 0) { await client.query('ROLLBACK'); return res.status(409).json({ error:'หมดตัวแล้ว' }); }
+
+    // สร้างคำขอ: เก็บ payment_method และตั้ง payment_status = 'pending'
+    const ins = await client.query(
+      `INSERT INTO breeding_loans
+         (rabbit_id, borrower_user_id, borrower_name, borrower_phone, borrower_address,
+          start_date, end_date, status, notes, total_price,
+          payment_method, payment_status, created_at, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'requested',$8,$9,
+               $10, 'pending', NOW(), NOW())
+       RETURNING loan_id, payment_method`,
+      [rabbit_id, borrower_user_id, borrower_name, borrower_phone, borrower_address,
+       start_date, end_date, notes, total_price, payment_method]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json({
+      loan_id: ins.rows[0].loan_id,
+      status: 'requested',
+      payment_method: ins.rows[0].payment_method
+    });
+  } catch (e) {
+    await client.query('ROLLBACK'); console.error(e);
+    res.status(500).json({ error: e.message || 'Server error' });
+  } finally { client.release(); }
+});
+
+
+// ========= My Breeding Loans: แนบสลิป / ระบุยอด =========
+
+// หมายเหตุ: ต้องมี middleware เสิร์ฟไฟล์อัปโหลดไว้ที่อื่นแล้ว เช่น:
+// app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')))
+
+// ========== ส่งสลิป/บันทึกการชำระสำหรับคำขอยืม ==========
+app.post('/api/breeding-loans/:id/pay', uploadSlip.single('slip'), async (req, res) => {
+  const client = await pool.connect();
+  try {
+    /* ---------- ตรวจพารามิเตอร์พื้นฐาน ---------- */
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ error: 'invalid loan id' });
+    }
+
+    /* ---------- ดึงค่าจาก FormData (multer จะ map text-fields ลง req.body) ---------- */
+    // แปลงยอดชำระให้เป็นตัวเลข (ตัด , เว้นวรรค ฯลฯ รองรับ "1,234.50")
+    const rawAmount = (req.body?.payment_amount ?? '').toString().trim();
+    let amount = null;
+    if (rawAmount !== '') {
+      const num = Number(rawAmount.replace(/[,\s]/g, ''));
+      if (Number.isFinite(num) && num > 0) {
+        amount = num;
+      }
+    }
+
+    // ref ไม่บังคับ แต่ถ้ามีก็เก็บแบบตัดช่องว่าง
+    const ref = (() => {
+      const v = (req.body?.payment_ref ?? '').toString().trim();
+      return v.length ? v : null;
+    })();
+
+    // method อนุญาตเฉพาะชุดนี้
+    const allowed = new Set(['bank_transfer', 'cod', 'wallet', 'cash']);
+    let method = (req.body?.payment_method || 'bank_transfer').toString().toLowerCase().trim();
+    if (!allowed.has(method)) method = 'bank_transfer';
+
+    // ถ้าเป็นโอนเงิน ต้องมียอดที่เป็นตัวเลข > 0
+    if (method === 'bank_transfer' && amount === null) {
+      return res.status(400).json({ error: 'payment_amount required (> 0) for bank_transfer' });
+    }
+
+    // path ไฟล์สลิป (ถ้ามีอัปโหลดมา field name ต้องเป็น 'slip')
+    const slipPath = req.file ? `/uploads/slips/${req.file.filename}` : null;
+
+    /* ---------- ทำธุรกรรม ---------- */
+    await client.query('BEGIN');
+
+    // lock แถวก่อนอัปเดต
+    const chk = await client.query(
+      'SELECT loan_id FROM breeding_loans WHERE loan_id = $1 FOR UPDATE',
+      [id]
+    );
+    if (!chk.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'not found' });
+    }
+
+    // อัปเดตสถานะเป็น submitted และเขียนค่าตรง ๆ (ไม่ใช้ COALESCE กับ amount)
+    const up = await client.query(
+      `UPDATE breeding_loans
+         SET payment_status   = 'submitted',
+             payment_method   = $2,
+             payment_amount   = $3,              -- เขียนค่าลงไปตรง ๆ
+             payment_ref      = $4,
+             payment_slip_url = COALESCE($5, payment_slip_url),
+             updated_at       = NOW()
+       WHERE loan_id = $1
+       RETURNING loan_id, payment_status, payment_method, payment_amount, payment_ref, payment_slip_url`,
+      [id, method, amount, ref, slipPath]
+    );
+
+    await client.query('COMMIT');
+
+    const row = up.rows[0];
+    return res.json({
+      ok: true,
+      loan_id: row.loan_id,
+      payment_status: row.payment_status,
+      payment_method: row.payment_method,
+      payment_amount: row.payment_amount,   // ✅ ตอนนี้จะไม่เป็น null แล้วถ้าส่งถูก
+      payment_ref: row.payment_ref,
+      payment_slip_url: row.payment_slip_url,
+    });
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error('PAY ERROR:', e);
+    return res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// แบบต้องล็อกอินจริง (อ่านจาก req.user) — ใช้กับฟรอนต์ที่เรียก /me
+app.get('/api/my-breeding-loans/me', async (req, res) => {
+  try {
+    // ลำดับความสำคัญ: req.user.user_id > ?user_id > ?buyer_id
+    let rawUid = req.user?.user_id;
+    if (!rawUid) rawUid = req.query.user_id ?? req.query.buyer_id;
+    const uid = Number(rawUid);
+
+    if (!Number.isFinite(uid)) {
+      return res.status(401).json({ error: 'unauthenticated or invalid user_id/buyer_id' });
+    }
+
+    const itemsQ = await pool.query(
+      `SELECT bl.loan_id, bl.rabbit_id, bl.borrower_name,
+              bl.start_date, bl.end_date, bl.status, bl.payment_status,
+              bl.total_price,
+              bl.return_requested, bl.return_requested_at,
+              bl.return_method, bl.return_from_text, bl.return_carrier, bl.return_tracking_code, bl.pickup_time, bl.return_note,
+              bl.ship_carrier, bl.ship_tracking_code, bl.shipped_at,
+              r.name AS rabbit_name, r.image_url AS rabbit_image, r.gender
+       FROM breeding_loans bl
+       JOIN rabbits r ON r.rabbit_id = bl.rabbit_id
+       WHERE bl.borrower_user_id = $1
+       ORDER BY bl.loan_id DESC`, [uid]
+    );
+
+    const sumQ = await pool.query(
+      `SELECT
+         COUNT(*)::int AS count,
+         COALESCE(SUM(total_price),0)::numeric AS total_spent,
+         SUM((status='on_loan')::int)::int     AS on_loan,
+         SUM((status='returned')::int)::int    AS returned,
+         SUM((status='requested')::int)::int   AS requested,
+         SUM((status='approved')::int)::int    AS approved,
+         SUM((status='cancelled')::int)::int   AS cancelled
+       FROM breeding_loans
+       WHERE borrower_user_id=$1`, [uid]
+    );
+
+    res.json({ summary: sumQ.rows[0], items: itemsQ.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error:'Server error' });
+  }
+});
+
+
+// แบบใช้ query param (รองรับ dev/no-auth) — ตอนนี้รองรับทั้ง ?user_id= และ ?buyer_id=
+app.get('/api/my-breeding-loans', async (req, res) => {
+  try {
+    const raw = req.query.user_id ?? req.query.buyer_id;
+    const uid = Number(raw);
+    if (!Number.isFinite(uid)) {
+      return res.status(400).json({ message: 'invalid user_id/buyer_id' });
+    }
+
+    const itemsQ = await pool.query(
+      `SELECT
+  bl.loan_id, bl.rabbit_id,
+  bl.borrower_name, bl.borrower_phone, bl.borrower_address,
+  bl.start_date, bl.end_date, bl.status, bl.notes,
+  bl.payment_status, bl.payment_method, bl.payment_amount, bl.payment_ref, bl.payment_slip_url, bl.paid_at,
+  bl.total_price,
+  bl.ship_carrier, bl.ship_tracking_code, bl.shipped_at,
+  bl.return_requested, bl.return_requested_at,
+  bl.return_method, bl.return_from_text,
+  bl.return_carrier, bl.return_tracking_code, bl.pickup_time,
+  bl.return_note,
+  COALESCE(bl.created_at, bl.start_date, NOW()) AS created_at,
+  r.name AS rabbit_name, r.image_url AS rabbit_image,
+  r.breed AS rabbit_breed, r.gender AS rabbit_gender
+FROM breeding_loans bl
+JOIN rabbits r ON r.rabbit_id = bl.rabbit_id
+       WHERE bl.borrower_user_id = $1
+       ORDER BY bl.loan_id DESC`, [uid]
+    );
+
+    const sumQ = await pool.query(
+      `SELECT
+         COUNT(*)::int AS count,
+         COALESCE(SUM(total_price),0)::numeric AS total_spent,
+         SUM((status='on_loan')::int)::int     AS on_loan,
+         SUM((status='returned')::int)::int    AS returned,
+         SUM((status='requested')::int)::int   AS requested,
+         SUM((status='approved')::int)::int    AS approved,
+         SUM((status='cancelled')::int)::int   AS cancelled
+       FROM breeding_loans
+       WHERE borrower_user_id=$1`, [uid]
+    );
+
+    res.json({ summary: sumQ.rows[0], items: itemsQ.rows });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ message:'server error' });
+  }
+});
+// --- ลูกค้า “แจ้งคืน” ---
+app.post('/api/breeding-loans/:id/return-request', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const {
+      return_method = null,      // 'ship' | 'dropoff' | 'pickup'
+      return_from_text = null,
+      return_carrier = null,
+      return_tracking_code = null,
+      pickup_time = null,        // ISO string
+      return_note = null
+    } = req.body || {};
+
+    const cur = await pool.query(`SELECT status FROM breeding_loans WHERE loan_id=$1`, [id]);
+    if (!cur.rowCount) return res.status(404).json({ error:'not found' });
+    if (cur.rows[0].status !== 'on_loan') return res.status(400).json({ error:'invalid state (not on_loan)' });
+
+    if (return_method === 'ship' && (!return_carrier || !return_tracking_code)) {
+      return res.status(400).json({ error:'ต้องระบุ return_carrier และ return_tracking_code เมื่อเลือกส่งพัสดุ' });
+    }
+
+    const up = await pool.query(
+      `UPDATE breeding_loans SET
+          return_requested     = TRUE,
+          return_requested_at  = NOW(),
+          return_method        = COALESCE($1, return_method),
+          return_from_text     = COALESCE($2, return_from_text),
+          return_carrier       = COALESCE($3, return_carrier),
+          return_tracking_code = COALESCE($4, return_tracking_code),
+          pickup_time          = COALESCE($5::timestamptz, pickup_time),
+          return_note          = COALESCE($6, return_note),
+          updated_at           = NOW()
+       WHERE loan_id=$7
+       RETURNING loan_id, status, return_requested, return_requested_at,
+                 return_method, return_from_text, return_carrier, return_tracking_code, pickup_time, return_note`,
+      [return_method, return_from_text, return_carrier, return_tracking_code, pickup_time, return_note, id]);
+
+    res.json({ message:'return requested', loan: up.rows[0] });
+  } catch (e) { console.error(e); res.status(500).json({ error:'Server error' }); }
+});
+
+// ===== Admin: รายการยืมพ่อ-แม่พันธุ์ (ค้นหา/กรอง/แบ่งหน้า) =====
+app.get('/api/admin/breeding-loans', async (req, res) => {
+  try {
+    const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.max(parseInt(req.query.limit || '10', 10), 1);
+    const offset = (page - 1) * limit;
+
+    const status = (req.query.status || '').toLowerCase();
+    const search = (req.query.search || '').trim();
+
+    const where = ['1=1'];
+    const vals = [];
+    if (status) { vals.push(status); where.push(`LOWER(bl.status) = $${vals.length}`); }
+    if (search) {
+      vals.push(`%${search.toLowerCase()}%`);
+      where.push(`(
+        LOWER(bl.borrower_name)  LIKE $${vals.length} OR
+        LOWER(bl.borrower_phone) LIKE $${vals.length} OR
+        LOWER(r.name)            LIKE $${vals.length}
+      )`);
+    }
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const totalQ = await pool.query(
+      `SELECT COUNT(*)::int AS total
+         FROM breeding_loans bl
+         JOIN rabbits r ON r.rabbit_id = bl.rabbit_id
+       ${whereSql}`, vals
+    );
+    const total = totalQ.rows[0]?.total || 0;
+
+    vals.push(limit, offset);
+    const rowsQ = await pool.query(
+      `SELECT
+         bl.loan_id, bl.rabbit_id,
+         bl.borrower_name, bl.borrower_phone, bl.borrower_address,
+         bl.start_date, bl.end_date, bl.status, bl.notes,
+         bl.total_price,
+
+         -- 🧾 ฟิลด์ชำระเงิน (ใช้แสดง/กดอนุมัติสลิป)
+         bl.payment_status, bl.payment_method, bl.payment_amount,
+         bl.payment_ref, bl.payment_slip_url, bl.paid_at,
+
+         -- 📦 ส่งไปและรับคืน
+         bl.ship_carrier, bl.ship_tracking_code, bl.shipped_at,
+         bl.return_requested, bl.return_requested_at,
+         bl.return_method, bl.return_from_text,
+         bl.return_carrier, bl.return_tracking_code, bl.pickup_time,
+         bl.return_note,
+
+         COALESCE(bl.created_at, bl.start_date, NOW()) AS created_at,
+         r.name AS rabbit_name, r.image_url AS rabbit_image,
+         r.breed AS rabbit_breed, r.gender AS rabbit_gender
+       FROM breeding_loans bl
+       JOIN rabbits r ON r.rabbit_id = bl.rabbit_id
+       ${whereSql}
+       ORDER BY bl.loan_id DESC
+       LIMIT $${vals.length-1} OFFSET $${vals.length}`, vals
+    );
+
+    res.json({ page, limit, total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      items: rowsQ.rows
+    });
+  } catch (e) {
+    console.error('GET /api/admin/breeding-loans error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+// อัปเดตเลขพัสดุอย่างเดียว
+app.put('/api/admin/breeding-loans/:id/ship', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { ship_carrier = null, ship_tracking_code = null } = req.body || {};
+    const q = await pool.query(
+      `UPDATE breeding_loans
+          SET ship_carrier = $2,
+              ship_tracking_code = $3,
+              shipped_at = NOW(),
+              updated_at = NOW()
+        WHERE loan_id = $1
+        RETURNING *`,
+      [id, ship_carrier, ship_tracking_code]
+    );
+    if (!q.rowCount) return res.status(404).json({ error:'not found' });
+    res.json(q.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error:'Server error' }); }
+});
+
+// ===== Admin: แก้ไขข้อมูลคำขอ (ฟอร์ม "บันทึก") =====
+app.put('/api/admin/breeding-loans/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const {
+      status, borrower_name, borrower_phone, borrower_address,
+      start_date, end_date, notes
+    } = req.body || {};
+
+    const q = await pool.query(
+      `UPDATE breeding_loans SET
+         status          = COALESCE($1, status),
+         borrower_name   = COALESCE($2, borrower_name),
+         borrower_phone  = COALESCE($3, borrower_phone),
+         borrower_address= COALESCE($4, borrower_address),
+         start_date      = COALESCE($5::date, start_date),
+         end_date        = COALESCE($6::date, end_date),
+         notes           = COALESCE($7, notes),
+         updated_at      = NOW()
+       WHERE loan_id = $8
+       RETURNING *`,
+      [status, borrower_name, borrower_phone, borrower_address, start_date, end_date, notes, id]
+    );
+
+    if (!q.rowCount) return res.status(404).json({ error: 'not found' });
+    res.json(q.rows[0]);
+  } catch (e) {
+    console.error('PUT /api/admin/breeding-loans/:id', e);
+    res.status(500).json({ error: 'Server error' });
+  }
+});
+
+app.post('/api/admin/breeding-loans/:id/approve', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const q = await pool.query(
+      `UPDATE breeding_loans
+         SET status='approved', updated_at=NOW()
+       WHERE loan_id=$1
+       RETURNING *`,
+      [id]
+    );
+    if (!q.rowCount) return res.status(404).json({ error: 'not found' });
+    res.json(q.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+
+// เริ่มยืม (ตัด stock + อัปเดตเลขพัสดุถ้ามี) => on_loan (+ปิดชำระถ้าขอ)
+app.post('/api/admin/breeding-loans/:id/start', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const {
+      ship_carrier = null,
+      ship_tracking_code = null,
+
+      // ⭐ ใหม่: สั่งให้ปิดยอดชำระเมื่อเริ่มยืม
+      mark_paid = false,
+      paid_amount = null, // ถ้าไม่ส่งมา จะ fallback เป็น total_price
+    } = req.body || {};
+
+    await client.query('BEGIN');
+
+    // ดึงคำขอยืมมาพร้อมข้อมูลการจ่ายเงิน
+    const blQ = await client.query(
+      `SELECT loan_id, rabbit_id, status,
+              payment_status, payment_method, total_price
+         FROM breeding_loans
+        WHERE loan_id=$1
+        FOR UPDATE`,
+      [id]
+    );
+    if (!blQ.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'not found' });
+    }
+    const bl = blQ.rows[0];
+
+    if (!['requested', 'approved'].includes(bl.status)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'invalid state to start' });
+    }
+
+    // ตัด stock
+    const rbQ = await client.query(
+      `SELECT COALESCE(stock,0) AS stock, status
+         FROM rabbits
+        WHERE rabbit_id=$1
+        FOR UPDATE`,
+      [bl.rabbit_id]
+    );
+    const rb = rbQ.rows[0];
+    if (rb.stock <= 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'หมดตัวแล้ว' });
+    }
+
+    await client.query(
+      `UPDATE rabbits
+          SET stock  = COALESCE(stock,0) - 1,
+              status = CASE WHEN COALESCE(stock,0) - 1 <= 0
+                            THEN 'out_of_stock' ELSE status END
+        WHERE rabbit_id=$1`,
+      [bl.rabbit_id]
+    );
+
+    // อัปเดตสถานะเป็น on_loan + ขนส่ง
+    await client.query(
+      `UPDATE breeding_loans
+          SET status='on_loan',
+              ship_carrier       = COALESCE($2, ship_carrier),
+              ship_tracking_code = COALESCE($3, ship_tracking_code),
+              shipped_at         = CASE WHEN $2 IS NOT NULL OR $3 IS NOT NULL
+                                        THEN NOW() ELSE shipped_at END,
+              updated_at         = NOW()
+        WHERE loan_id=$1`,
+      [id, ship_carrier, ship_tracking_code]
+    );
+
+    // ⭐ ถ้าขอให้ปิดยอด และยังไม่ paid → ตั้งเป็น paid
+    if (mark_paid && bl.payment_status !== 'paid') {
+      const amt = Number.isFinite(Number(paid_amount))
+        ? Number(paid_amount)
+        : Number(bl.total_price || 0);
+
+      await client.query(
+        `UPDATE breeding_loans
+            SET payment_status='paid',
+                payment_amount=$2,
+                paid_at=NOW(),
+                updated_at=NOW()
+          WHERE loan_id=$1`,
+        [id, amt]
+      );
+    }
+
+    // ส่งข้อมูลล่าสุดกลับ (รวม payment fields)
+    const latest = await client.query(
+      `SELECT *
+         FROM breeding_loans
+        WHERE loan_id=$1`,
+      [id]
+    );
+
+    await client.query('COMMIT');
+    res.json(latest.rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK');
+    console.error(e);
+    res.status(500).json({ error: 'Server error' });
+  } finally {
+    client.release();
+  }
+});
+
+// ยกเลิก (ถ้าเคย on_loan แล้ว ให้คืนสต๊อก)
+app.post('/api/admin/breeding-loans/:id/cancel', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    await client.query('BEGIN');
+
+    const blQ = await client.query(
+      `SELECT loan_id, rabbit_id, status
+         FROM breeding_loans
+        WHERE loan_id=$1
+        FOR UPDATE`,
+      [id]
+    );
+    if (!blQ.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'not found' }); }
+    const bl = blQ.rows[0];
+
+    // ถ้าเคยเริ่มยืมแล้ว ให้คืนสต๊อก
+    if (bl.status === 'on_loan') {
+      await client.query(
+        `UPDATE rabbits
+            SET stock  = COALESCE(stock,0) + 1,
+                status = CASE WHEN COALESCE(stock,0) + 1 > 0 THEN 'available' ELSE status END
+          WHERE rabbit_id=$1`,
+        [bl.rabbit_id]
+      );
+    }
+
+    const upQ = await client.query(
+      `UPDATE breeding_loans
+          SET status='cancelled', updated_at=NOW()
+        WHERE loan_id=$1
+        RETURNING *`,
+      [id]
+    );
+
+    await client.query('COMMIT');
+    res.json(upQ.rows[0]);
+  } catch (e) {
+    await client.query('ROLLBACK'); console.error(e);
+    res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
+});
+
+
+// รับคืน (คืนสต๊อก + ปิดงานเป็น returned)
+app.post('/api/admin/breeding-loans/:id/mark-returned', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
+
+    await client.query('BEGIN');
+
+    const blQ = await client.query(
+      `SELECT loan_id, rabbit_id, status
+         FROM breeding_loans
+        WHERE loan_id = $1
+        FOR UPDATE`, [id]
+    );
+    if (!blQ.rowCount) { await client.query('ROLLBACK'); return res.status(404).json({ error: 'not found' }); }
+    const bl = blQ.rows[0];
+
+    if (!['on_loan', 'approved'].includes(bl.status)) {
+      await client.query('ROLLBACK'); return res.status(400).json({ error: 'invalid state to return' });
+    }
+
+    const rbQ = await client.query(
+      `UPDATE rabbits
+          SET stock  = COALESCE(stock,0) + 1,
+              status = CASE WHEN COALESCE(stock,0) + 1 > 0 THEN 'available' ELSE status END
+        WHERE rabbit_id = $1
+        RETURNING rabbit_id, stock, status`,
+      [bl.rabbit_id]
+    );
+
+    const upQ = await client.query(
+      `UPDATE breeding_loans
+          SET status = 'returned',
+              updated_at = NOW()
+        WHERE loan_id = $1
+        RETURNING loan_id, status`,
+      [id]
+    );
+
+    await client.query('COMMIT');
+    res.json({ ok: true, loan: upQ.rows[0], rabbit: rbQ.rows[0], message: 'marked as returned and restocked' });
+  } catch (e) {
+    await client.query('ROLLBACK'); console.error(e);
+    res.status(500).json({ error: 'Server error' });
+  } finally { client.release(); }
+});
+// ✅ อนุมัติสลิป -> payment_status='paid', กรอก paid_at
+app.post('/api/admin/breeding-loans/:id/payment-approve', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const q = await pool.query(
+      `UPDATE breeding_loans
+         SET payment_status='paid',
+             paid_at = NOW(),
+             payment_amount = COALESCE(payment_amount, total_price),
+             updated_at = NOW()
+       WHERE loan_id = $1
+       RETURNING loan_id, payment_status, payment_amount, paid_at`,
+      [id]
+    );
+    if (!q.rowCount) return res.status(404).json({ error:'not found' });
+    res.json(q.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error:'Server error' }); }
+});
+
+// ❌ ปฏิเสธสลิป -> payment_status='rejected' (เก็บเหตุผลได้ถ้าส่ง reason มา)
+app.post('/api/admin/breeding-loans/:id/payment-reject', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const q = await pool.query(
+      `UPDATE breeding_loans
+         SET payment_status='rejected',
+             updated_at=NOW()
+       WHERE loan_id=$1
+       RETURNING loan_id, payment_status`,
+      [id]
+    );
+    if (!q.rowCount) return res.status(404).json({ error:'not found' });
+    res.json(q.rows[0]);
+  } catch (e) { console.error(e); res.status(500).json({ error:'Server error' }); }
+});
+
 /* ===================== Start server ===================== */
 app.listen(port, ()=>console.log(`🐰 Server running at http://localhost:${port}`));

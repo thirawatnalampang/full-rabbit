@@ -10,7 +10,7 @@ export default function SellerDashboard() {
       </h1>
 
       {/* ปุ่มเมนูจัดการ */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-6 gap-6">
         {/* จัดการกระต่าย */}
         <Link
           to="/manage-rabbits"
@@ -28,7 +28,13 @@ export default function SellerDashboard() {
           <span className="text-3xl mb-2">🛒</span>
           <span className="font-bold">จัดการสินค้า</span>
         </Link>
-
+        <Link
+          to="/manage-rabbit-loans"
+          className="bg-violet-50 px-6 py-4 rounded-lg shadow hover:shadow-md hover:-translate-y-1 transition flex flex-col items-center"
+        >
+          <span className="text-3xl mb-2">📋</span>
+          <span className="font-bold">ยืมพ่อ-แม่พันธุ์</span>
+        </Link>
         {/* คำสั่งซื้อ */}
         <Link
           to="/manage-orders"
@@ -39,13 +45,13 @@ export default function SellerDashboard() {
         </Link>
 
         {/* ผู้ใช้ */}
-<Link
-  to="/users" // 👉 เปลี่ยน path ไปที่หน้าผู้ใช้
-  className="bg-blue-50 px-6 py-4 rounded-lg shadow hover:shadow-md hover:-translate-y-1 transition flex flex-col items-center"
->
-  <span className="text-3xl mb-2">👤</span> {/* เปลี่ยน emoji จากรถเป็นไอคอนผู้ใช้ */}
-  <span className="font-bold">ผู้ใช้</span> {/* เปลี่ยนข้อความ */}
-</Link>
+        <Link
+          to="/users"
+          className="bg-blue-50 px-6 py-4 rounded-lg shadow hover:shadow-md hover:-translate-y-1 transition flex flex-col items-center"
+        >
+          <span className="text-3xl mb-2">👤</span>
+          <span className="font-bold">ผู้ใช้</span>
+        </Link>
 
         {/* สถิติ */}
         <Link

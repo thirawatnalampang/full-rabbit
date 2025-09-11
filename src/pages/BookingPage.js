@@ -1,143 +1,450 @@
-// pages/BookingPage.jsx
-import { useLocation } from 'react-router-dom';
-import React, { useState } from 'react';
+// src/pages/BookingPage.jsx
+import React, { useMemo, useState, useEffect } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../context/AuthContext";
+
+const FALLBACK_IMG = "https://placehold.co/300x300?text=Rabbit";
+const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000";
+const getUserId = (user) =>
+  user?.user_id ?? JSON.parse(localStorage.getItem("user") || "{}")?.user_id ?? null;
 
 export default function BookingPage() {
-  const location = useLocation();
-  const rabbit = location.state?.rabbit;
+  const { state } = useLocation();
+  const nav = useNavigate();
+  const { user } = useAuth();
+  const rabbit = state?.rabbit;
 
-  const [phone, setPhone] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
-  const [formData, setFormData] = useState({
-    name: '',
-    address: '',
-    date: '',
-    message: '',
+  const baseDays = 3;
+  const basePrice = Number(rabbit?.price ?? 0);
+  const pricePerDay = baseDays > 0 ? basePrice / baseDays : 0;
+
+  const [phone, setPhone] = useState("");
+  const [success, setSuccess] = useState(null);
+  const [placing, setPlacing] = useState(false);
+  const [error, setError] = useState("");
+
+  const [paymentMethod, setPaymentMethod] = useState("cod"); // cod | bank_transfer
+  const [slipFile, setSlipFile] = useState(null);
+  const [slipPreview, setSlipPreview] = useState("");
+
+  const [form, setForm] = useState({
+    name: "",
+    address: "",
+    date: "",
+    returnDate: "",
+    message: "",
     agree: false,
   });
 
-  if (!rabbit) {
-    return <div>ไม่พบข้อมูลกระต่ายที่ต้องการจอง</div>;
-  }
+  const [freshRabbit, setFreshRabbit] = useState(rabbit || null);
+  useEffect(() => {
+    if (!rabbit?.rabbit_id) return;
+    fetch(`${API_BASE}/api/parents/${rabbit.rabbit_id}`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data) => data && setFreshRabbit((prev) => ({ ...prev, ...data })))
+      .catch(() => {});
+  }, [rabbit?.rabbit_id]);
 
-  // ฟังก์ชันกรองเบอร์โทร
   const handlePhoneChange = (e) => {
-    const onlyNums = e.target.value.replace(/\D/g, ''); // กรองเฉพาะตัวเลข
-    if (onlyNums.length <= 10) {
-      setPhone(onlyNums);
-    }
+    const onlyNums = e.target.value.replace(/\D/g, "");
+    if (onlyNums.length <= 10) setPhone(onlyNums);
   };
-
   const handleChange = (e) => {
     const { name, value, type, checked } = e.target;
-    setFormData((prev) => ({
-      ...prev,
-      [name]: type === 'checkbox' ? checked : value,
-    }));
+    setForm((s) => ({ ...s, [name]: type === "checkbox" ? checked : value }));
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  const diffDays = (s, e) =>
+    !s || !e ? 0 : Math.ceil((new Date(e) - new Date(s)) / 86400000);
+  const days = useMemo(
+    () => diffDays(form.date, form.returnDate),
+    [form.date, form.returnDate]
+  );
+  const totalPrice = useMemo(
+    () => (days > 0 ? days * pricePerDay : 0),
+    [days, pricePerDay]
+  );
+  const minReturnDate = useMemo(() => {
+    if (!form.date) return "";
+    const d = new Date(form.date);
+    d.setDate(d.getDate() + 1);
+    return d.toISOString().slice(0, 10);
+  }, [form.date]);
 
-    // ตรวจสอบก่อนส่ง (คุณสามารถเพิ่ม validation ได้มากกว่านี้)
-    if (!formData.name || !phone || !formData.address || !formData.date || !formData.agree) {
-      alert('กรุณากรอกข้อมูลให้ครบถ้วนและยอมรับข้อตกลง');
-      return;
+  const currentStock = freshRabbit?.stock ?? rabbit?.stock ?? 0;
+  const currentStatus = (freshRabbit?.status ?? rabbit?.status) || "available";
+  const isOOS = currentStock <= 0 || currentStatus === "out_of_stock";
+
+  const canSubmit =
+    !!rabbit &&
+    !isOOS &&
+    form.name.trim() &&
+    phone.length === 10 &&
+    form.address.trim() &&
+    form.date &&
+    form.returnDate &&
+    days > 0 &&
+    form.agree &&
+    (paymentMethod === "cod" ||
+      (paymentMethod === "bank_transfer" && !!slipFile));
+
+  const pickSlip = (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setSlipFile(f);
+    setSlipPreview(URL.createObjectURL(f));
+  };
+  const removeSlip = () => {
+    setSlipFile(null);
+    setSlipPreview("");
+  };
+
+  const submitLoan = async (e) => {
+  e.preventDefault();
+  setError("");
+  if (!canSubmit) {
+    setError(
+      isOOS ? "ของหมดชั่วคราว" : "กรอกข้อมูลให้ครบ และแนบสลิปหากเลือกโอน"
+    );
+    return;
+  }
+
+  const uid = getUserId(user);
+  if (!uid) {
+    // ถ้าไม่ล็อกอิน → ไปหน้าเข้าสู่ระบบก่อน
+    nav("/login", { state: { from: "/booking", rabbit }, replace: true });
+    return;
+  }
+
+  try {
+    setPlacing(true);
+
+    // 1) สร้างคำขอยืม
+    const createPayload = {
+      rabbit_id: rabbit.rabbit_id ?? rabbit.id ?? rabbit._id,
+      borrower_name: form.name.trim(),
+      borrower_phone: phone,
+      borrower_address: form.address.trim(),
+      start_date: form.date,
+      end_date: form.returnDate,
+      notes: form.message || null,
+      total_price: Number(totalPrice.toFixed(2)),  // ทำการคำนวณยอดชำระ
+      user_id: uid, // สำคัญ
+      payment_method: paymentMethod, // <<<< ใส่อันนี้ (cod | bank_transfer)
+    };
+
+    const res = await fetch(`${API_BASE}/api/breeding-loans`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(createPayload),
+    });
+    if (!res.ok) throw new Error(await res.text());
+    const created = await res.json().catch(() => ({}));
+    const loanId = created.loan_id ?? created.id;
+    if (!loanId) throw new Error("ไม่พบหมายเลขคำขอ (loan_id)");
+
+    // 2) ถ้าโอนเงิน → แนบสลิป
+    if (paymentMethod === "bank_transfer" && slipFile) {
+      const fd = new FormData();
+      fd.append("payment_method", "bank_transfer");
+      fd.append("payment_amount", String(createPayload.total_price || ""));  // แสดงยอดที่ต้องชำระ
+      fd.append("payment_ref", `BT-${Date.now()}`);
+      fd.append("slip", slipFile);
+      const pay = await fetch(
+        `${API_BASE}/api/breeding-loans/${loanId}/pay`,
+        { method: "POST", body: fd }
+      );
+      if (!pay.ok) throw new Error(await pay.text());
     }
 
-    // จำลองการจองเสร็จ
-    setSuccessMessage('🎉 จองกระต่ายสำเร็จ! ขอบคุณที่ใช้บริการของเรา 🐇');
-  };
+    setSuccess({
+      loan_id: loanId,
+      total: createPayload.total_price, // แสดงยอดที่ต้องชำระ
+      paid: paymentMethod === "bank_transfer",
+    });
+
+    // ✅ พาทันทีไปหน้าการยืมของฉัน (แนบ ?new= เพื่อให้หน้าแสดงแถบแจ้งสำเร็จ)
+    nav(`/my-loans?new=${loanId}`, { replace: true });
+  } catch (err) {
+    setError(err.message || "ส่งคำขอยืมไม่สำเร็จ");
+  } finally {
+    setPlacing(false);
+  }
+};
+
 
   return (
-    <div className="p-6 max-w-3xl mx-auto">
-      <h2 className="text-xl font-bold mb-4">
-        🐰 จองกระต่าย: {rabbit.name} ({rabbit.nickname}) ({rabbit.breed})
-      </h2>
+    <div className="p-6 max-w-3xl mx-auto space-y-5">
+      {!rabbit ? (
+        <div>ไม่พบข้อมูลพ่อ/แม่พันธุ์ที่ต้องการยืม</div>
+      ) : (
+        <>
+          <h2 className="text-xl font-bold">
+            🐰 ขอ<strong>ยืมผสมพันธุ์</strong>: {rabbit.name}
+          </h2>
 
-      <div className="flex gap-6 mb-4">
-        <img src={rabbit.image} alt={rabbit.name} className="w-60 h-60 object-cover rounded-lg" />
-        <div className="flex-1 space-y-2">
-          <p>🔹 สายพันธุ์: {rabbit.breed}</p>
-          <p>⚥ เพศ: {rabbit.gender === 'male' ? 'ผู้' : 'เมีย'}</p>
-          <p>📅 อายุ: {rabbit.age} ปี</p>
-          <p>💰 ราคาเช่า: {rabbit.price} บาท / 3 วัน</p>
-        </div>
-      </div>
+          {isOOS && (
+            <div className="bg-red-50 text-red-700 border border-red-200 rounded p-3">
+              ของหมดชั่วคราว • คงเหลือ: {currentStock}
+            </div>
+          )}
 
-      <form className="space-y-4" onSubmit={handleSubmit}>
-        <div>
-          <label>👤 ชื่อผู้จอง:</label>
-          <input
-            name="name"
-            value={formData.name}
-            onChange={handleChange}
-            className="border w-full p-2 rounded"
-          />
-        </div>
-        <div>
-          <label>📞 เบอร์โทร (10 ตัวเลข):</label>
-          <input
-            type="text"
-            value={phone}
-            onChange={handlePhoneChange}
-            className="border w-full p-2 rounded"
-            inputMode="numeric"
-            maxLength={10}
-          />
-        </div>
-        <div>
-          <label>📍 ที่อยู่:</label>
-          <input
-            name="address"
-            value={formData.address}
-            onChange={handleChange}
-            className="border w-full p-2 rounded"
-          />
-        </div>
-        <div>
-          <label>📅 วันที่เริ่มเช่า:</label>
-          <input
-            type="date"
-            name="date"
-            value={formData.date}
-            onChange={handleChange}
-            className="border w-full p-2 rounded"
-          />
-        </div>
-        <div>
-          <label>📝 ข้อความเพิ่มเติม:</label>
-          <textarea
-            name="message"
-            value={formData.message}
-            onChange={handleChange}
-            className="border w-full p-2 rounded"
-            rows="3"
-          />
-        </div>
-        <div>
-          <label className="flex items-center gap-2">
-            <input
-              type="checkbox"
-              name="agree"
-              checked={formData.agree}
-              onChange={handleChange}
+          {success && (
+            <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 rounded p-4">
+              ✅ ส่งคำขอยืมเรียบร้อย • หมายเลขคำขอ: <b>{success.loan_id}</b>
+              {Number.isFinite(success.total) && (
+                <>
+                  {" "}
+                  • ยอดโดยประมาณ:{" "}
+                  <b>{success.total.toFixed(2)} บาท</b>
+                </>
+              )}
+              <div className="text-sm mt-1 text-emerald-700">
+                สถานะเริ่มต้น:{" "}
+                <b>{success.paid ? "paid" : "requested"}</b>
+              </div>
+            </div>
+          )}
+
+          <div className="flex gap-6 mb-2">
+            <img
+              src={freshRabbit?.image || rabbit.image || FALLBACK_IMG}
+              alt={rabbit.name}
+              className="w-60 h-60 object-cover rounded-lg border"
+              onError={(e) => {
+                e.currentTarget.src = FALLBACK_IMG;
+              }}
             />
-            ยอมรับข้อตกลงการเช่า
-          </label>
-        </div>
-        <button
-          type="submit"
-          className="bg-green-400 hover:bg-green-500 text-white py-2 px-4 rounded"
-        >
-          ยืนยันการจอง
-        </button>
-      </form>
+            <div className="flex-1 space-y-2">
+              {(freshRabbit?.breed || rabbit.breed) && (
+                <p>🔹 สายพันธุ์: {freshRabbit?.breed ?? rabbit.breed}</p>
+              )}
+              <p>
+                ⚥ เพศ:{" "}
+                {(freshRabbit?.gender ?? rabbit.gender) === "male"
+                  ? "ผู้"
+                  : "เมีย"}
+              </p>
+              {(freshRabbit?.age ?? rabbit.age) != null && (
+                <p>📅 อายุ: {freshRabbit?.age ?? rabbit.age} ปี</p>
+              )}
+              <p>📦 คงเหลือ: {currentStock}</p>
+              <p>สถานะ: {currentStatus}</p>
 
-      {successMessage && (
-        <div className="mt-6 bg-green-100 border border-green-400 text-green-700 px-4 py-3 rounded">
-          {successMessage}
-        </div>
+              <div className="mt-3 p-3 rounded-lg bg-neutral-50 border">
+                <div>
+                  💰 ราคาแพ็กพื้นฐาน (ตัวอย่าง): {basePrice.toFixed(2)} บาท /{" "}
+                  {baseDays} วัน
+                </div>
+                <div>⇒ เฉลี่ย {pricePerDay.toFixed(2)} บาท/วัน</div>
+                {days > 0 ? (
+                  <div className="font-semibold text-green-700 mt-1">
+                    รวม {days} วัน = {totalPrice.toFixed(2)} บาท
+                  </div>
+                ) : (
+                  <div className="text-neutral-500 mt-1">
+                    เลือกวันที่เริ่มและวันสิ้นสุด เพื่อคำนวณราคาโดยประมาณ
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <form className="space-y-4" onSubmit={submitLoan}>
+            <div>
+              <label className="block mb-1">👤 ชื่อผู้ขอยืม:</label>
+              <input
+                name="name"
+                value={form.name}
+                onChange={handleChange}
+                className="border w-full p-2 rounded"
+              />
+            </div>
+            <div>
+              <label className="block mb-1">📞 เบอร์โทร (10 ตัวเลข):</label>
+              <input
+                type="text"
+                value={phone}
+                onChange={handlePhoneChange}
+                className="border w-full p-2 rounded"
+                inputMode="numeric"
+                maxLength={10}
+                placeholder="09XXXXXXXX"
+              />
+            </div>
+            <div>
+              <label className="block mb-1">📍 ที่อยู่:</label>
+              <input
+                name="address"
+                value={form.address}
+                onChange={handleChange}
+                className="border w-full p-2 rounded"
+              />
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className="block mb-1">📅 วันที่เริ่มยืม:</label>
+                <input
+                  type="date"
+                  name="date"
+                  value={form.date}
+                  onChange={(e) => {
+                    const v = e.target.value;
+                    setForm((s) => ({
+                      ...s,
+                      date: v,
+                      returnDate:
+                        s.returnDate && new Date(s.returnDate) > new Date(v)
+                          ? s.returnDate
+                          : "",
+                    }));
+                  }}
+                  className="border w-full p-2 rounded"
+                />
+              </div>
+              <div>
+                <label className="block mb-1">📦 วันที่สิ้นสุด:</label>
+                <input
+                  type="date"
+                  name="returnDate"
+                  min={minReturnDate || undefined}
+                  value={form.returnDate}
+                  onChange={handleChange}
+                  className="border w-full p-2 rounded"
+                />
+              </div>
+            </div>
+
+            {/* ชำระเงิน */}
+            <div className="border-t pt-3">
+              <label className="block font-medium mb-1">💳 วิธีชำระเงิน</label>
+              <div className="flex gap-3 flex-wrap">
+                <label
+                  className={`px-3 py-2 rounded border cursor-pointer ${
+                    paymentMethod === "cod"
+                      ? "bg-black text-white"
+                      : "hover:bg-neutral-50"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    className="mr-2"
+                    name="pay"
+                    checked={paymentMethod === "cod"}
+                    onChange={() => setPaymentMethod("cod")}
+                  />
+                  เก็บเงินปลายทาง (COD)
+                </label>
+                <label
+                  className={`px-3 py-2 rounded border cursor-pointer ${
+                    paymentMethod === "bank_transfer"
+                      ? "bg-black text-white"
+                      : "hover:bg-neutral-50"
+                  }`}
+                >
+                  <input
+                    type="radio"
+                    className="mr-2"
+                    name="pay"
+                    checked={paymentMethod === "bank_transfer"}
+                    onChange={() => setPaymentMethod("bank_transfer")}
+                  />
+                  โอนเงิน/พร้อมเพย์ (แนบสลิป)
+                </label>
+              </div>
+
+              {paymentMethod === "bank_transfer" && (
+                <div className="mt-3">
+                  <div className="text-sm text-neutral-600 mb-2">
+                    อัปโหลดสลิป (JPG/PNG)
+                  </div>
+                  {slipPreview ? (
+                    <div className="flex items-center gap-3">
+                      <img
+                        src={slipPreview}
+                        alt="slip"
+                        className="w-24 h-24 rounded border object-cover"
+                      />
+                      <div className="space-x-2">
+                        <button
+                          type="button"
+                          className="px-3 py-2 rounded border"
+                          onClick={() =>
+                            document.getElementById("slipInput").click()
+                          }
+                        >
+                          เปลี่ยนรูป
+                        </button>
+                        <button
+                          type="button"
+                          className="px-3 py-2 rounded border border-red-300 text-red-600"
+                          onClick={removeSlip}
+                        >
+                          ลบรูป
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() =>
+                        document.getElementById("slipInput").click()
+                      }
+                      className="px-4 py-2 rounded border border-dashed w-full text-left hover:bg-neutral-50"
+                    >
+                      แนบสลิปการโอน
+                    </button>
+                  )}
+                  <input
+                    id="slipInput"
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={pickSlip}
+                  />
+                </div>
+              )}
+            </div>
+
+            <div>
+              <label className="block mb-1">📝 ข้อความเพิ่มเติม:</label>
+              <textarea
+                name="message"
+                value={form.message}
+                onChange={handleChange}
+                className="border w-full p-2 rounded"
+                rows="3"
+              />
+            </div>
+
+            <div className="border-t pt-3">
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  name="agree"
+                  checked={form.agree}
+                  onChange={handleChange}
+                />
+                ยอมรับข้อตกลงการยืมผสมพันธุ์
+              </label>
+            </div>
+
+            {error && <div className="text-red-600 text-sm">{error}</div>}
+
+            <button
+              type="submit"
+              disabled={!canSubmit || placing}
+              className={`py-2 px-4 rounded text-white ${
+                !canSubmit || placing
+                  ? "bg-neutral-400 cursor-not-allowed"
+                  : "bg-green-500 hover:bg-green-600"
+              }`}
+            >
+              {placing ? "กำลังบันทึก..." : "ยืนยันการยืมผสมพันธุ์"}
+            </button>
+          </form>
+        </>
       )}
     </div>
   );

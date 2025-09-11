@@ -47,7 +47,7 @@ export default function AddProductForm() {
 
       // 2) Save product
       const payload = {
-        seller_id: null,
+
         name,
         category,
         price: Number(price),

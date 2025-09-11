@@ -12,6 +12,8 @@ import {
   FaArrowLeft,
   FaListAlt,
   FaTimes,
+  FaBookOpen,
+  
 } from 'react-icons/fa';
 
 export default function Navbar() {
@@ -78,6 +80,11 @@ export default function Navbar() {
           <Link to="/cart" title="ตะกร้าสินค้า" className="hover:text-teal-300 transition-colors duration-300">
             <FaShoppingCart size={26} />
           </Link>
+{user && (
+  <Link to="/my-loans" title="การยืมของฉัน" className="hover:text-teal-300 transition-colors duration-300">
+    <FaBookOpen size={26} />
+  </Link>
+)}
 
           {user && (
             <Link to="/my-orders" title="คำสั่งซื้อของฉัน" className="hover:text-teal-300 transition-colors duration-300">

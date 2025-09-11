@@ -32,6 +32,8 @@ import EditProductForm from './pages/EditProductForm';
 import CheckoutPage from './pages/CheckoutPage';
 import MyOrdersPage from './pages/MyOrdersPage';
 import OrderDetailPage from './pages/OrderDetailPage';
+import ManageRabbitLoans from "./pages/ManageBreedingLoans";
+import MyLoansPage from "./pages/MyLoansPage";
 
 import './App.css';
 
@@ -74,6 +76,9 @@ function App() {
           <Route path="/orders/:id" element={<OrderDetailPage />} />
           <Route path="*" element={<NotFound />} />
           <Route path="/users" element={<UsersPage />} />
+          <Route path="/manage-rabbit-loans" element={<ManageRabbitLoans />} />
+          <Route path="/my-loans" element={<MyLoansPage />} />
+          
         </Routes>
       </div>
     </>

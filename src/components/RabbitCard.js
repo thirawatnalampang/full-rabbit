@@ -33,7 +33,7 @@ export default function RabbitCard({ rabbit }) {
         onClick={handleBooking}
         className="mt-3 bg-rose-400 hover:bg-rose-500 text-white px-4 py-2 rounded-md font-semibold shadow"
       >
-        🐇 จองกระต่ายตัวนี้เลย!
+        🐇 เช่าตัวนี้เลย!
       </button>
     </div>
   );
