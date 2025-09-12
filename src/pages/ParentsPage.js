@@ -119,7 +119,7 @@ export default function ParentsPage() {
                             : "bg-emerald-100 text-emerald-700 border border-emerald-200"
                         }`}
                       >
-                        {outOrOOS ? "หมดตัว" : `คงเหลือ: ${r.stock ?? 0}`}
+                        {outOrOOS ? "หมด" : `คงเหลือ: ${r.stock ?? 0}`}
                       </span>
                       {/* ลบสถานะออกตามที่ขอ */}
                     </div>

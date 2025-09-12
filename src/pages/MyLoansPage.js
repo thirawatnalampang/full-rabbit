@@ -394,13 +394,17 @@ function LoanCard({ item }) {
           </div>
 
           {(item.ship_carrier || item.ship_tracking_code || item.shipped_at) && (
-            <div className="text-xs mt-2 text-neutral-600 flex items-center gap-2">
-              <FiTruck className="shrink-0" />
-              <span>
-                {item.ship_carrier || "-"} • เลขพัสดุ: {item.ship_tracking_code || "-"} • อัปเดต {fmt(item.shipped_at)}
-              </span>
-            </div>
-          )}
+  <div
+    className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full border text-sm
+               bg-amber-100 text-amber-800 border-amber-200 mt-2"
+  >
+    <FiTruck className="shrink-0" />
+    <span className="font-medium">{item.ship_carrier || "-"}</span>
+    <span>• เลขพัสดุ:</span>
+    <span className="font-bold tracking-wide">{item.ship_tracking_code || "-"}</span>
+    <span>• อัปเดต {fmt(item.shipped_at)}</span>
+  </div>
+)}
 
           {item.status === "on_loan" &&
             (item.return_requested ? (

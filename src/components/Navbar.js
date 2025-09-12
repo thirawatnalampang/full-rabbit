@@ -176,20 +176,45 @@ export default function Navbar() {
         </div>
       </nav>
 
-      {/* Bottom Tab Bar (เฉพาะจอเล็ก) */}
-      <div className="md:hidden fixed bottom-0 inset-x-0 z-50 bg-black/95 backdrop-blur supports-[padding:max(0px)]:pb-[env(safe-area-inset-bottom)]">
-        <div className="grid grid-cols-5">
-          <TabLink to="/" label="หน้าแรก" icon={<FaHome />} active={location.pathname === '/'} />
-          <TabLink to="/pets" label="สัตว์เลี้ยง" icon={<FaPaw />} active={location.pathname.startsWith('/pets')} />
-          <TabLink to="/cart" label="ตะกร้า" icon={<FaShoppingCart />} active={location.pathname.startsWith('/cart')} />
-          {user ? (
-            <TabLink to="/my-orders" label="คำสั่งซื้อ" icon={<FaListAlt />} active={location.pathname.startsWith('/my-orders')} />
-          ) : (
-            <TabLink to="/login" label="เข้าสู่ระบบ" icon={<FaUserAlt />} active={location.pathname.startsWith('/login')} />
-          )}
-          <TabLink to={user ? '/profile' : '/login'} label="โปรไฟล์" icon={<FaUserAlt />} active={location.pathname.startsWith('/profile')} />
-        </div>
-      </div>
+{/* Bottom Tab Bar (เฉพาะจอเล็ก) */}
+<nav
+  className="md:hidden fixed bottom-0 inset-x-0 z-[60] bg-black/95 backdrop-blur
+             pb-[calc(env(safe-area-inset-bottom,0px))]
+             border-t border-white/10"
+  role="navigation"
+  aria-label="เมนูด้านล่าง"
+>
+  <div className="flex items-stretch justify-around">
+    <TabLink to="/"        label="หน้าแรก"     icon={<FaHome />}          active={location.pathname === '/'} />
+    <TabLink to="/pets"    label="สัตว์เลี้ยง" icon={<FaPaw />}           active={location.pathname.startsWith('/pets')} />
+    <TabLink to="/cart"    label="ตะกร้า"       icon={<FaShoppingCart />}  active={location.pathname.startsWith('/cart')} />
+
+    {user && (
+      <TabLink to="/my-loans" label="การยืม" icon={<FaBookOpen />} active={location.pathname.startsWith('/my-loans')} />
+    )}
+
+    {user ? (
+      <TabLink to="/my-orders" label="คำสั่งซื้อ" icon={<FaListAlt />} active={location.pathname.startsWith('/my-orders')} />
+    ) : (
+      <TabLink to="/login"     label="เข้าสู่ระบบ" icon={<FaUserAlt />} active={location.pathname.startsWith('/login')} />
+    )}
+
+    <TabLink
+      to={user ? '/profile' : '/login'}
+      label="โปรไฟล์"
+      icon={<FaUserAlt />}
+      active={
+        user
+          ? location.pathname.startsWith('/profile')
+          : location.pathname.startsWith('/login')
+      }
+    />
+  </div>
+</nav>
+
+
+{/* Spacer กันคอนเทนต์ทับ Bottom Bar */}
+<div className="md:hidden h-[64px]" />
 
       {/* Admin FAB (จอเล็ก) */}
       {user?.role === 'admin' && (
@@ -213,14 +238,15 @@ function TabLink({ to, icon, label, active }) {
   return (
     <Link
       to={to}
-      className={`flex flex-col items-center justify-center py-2 text-xs transition ${
-        active ? 'text-teal-300' : 'text-white'
-      }`}
+      className={`flex-1 min-w-[64px] flex flex-col items-center justify-center
+                  py-2.5 text-[11px] leading-none transition
+                  ${active ? 'text-teal-300' : 'text-white/90 hover:text-white'}`}
       title={label}
       aria-label={label}
     >
-      <div className={`text-lg ${active ? 'scale-110' : ''}`}>{icon}</div>
-      <span className="mt-0.5">{label}</span>
+      <div className={`text-xl ${active ? 'scale-110' : ''}`}>{icon}</div>
+      {/* ซ่อน label เมื่อจอกว้าง < 360px เพื่อลดการเบียด */}
+      <span className="mt-1 hidden [@media(min-width:360px)]:inline">{label}</span>
     </Link>
   );
 }
