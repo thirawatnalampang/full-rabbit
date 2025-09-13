@@ -156,6 +156,35 @@ export default function MyOrdersPage() {
   const [err, setErr] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
+  // helper: โหลดรายการของฉัน (ใช้ซ้ำหลังยกเลิก)
+  async function reloadMine() {
+    const res = await fetch(`${API_BASE}/api/my-orders?buyer_id=${user.user_id}`);
+    const data = await res.json();
+    setRows(Array.isArray(data) ? data : []);
+  }
+
+  // ลูกค้ายกเลิกออเดอร์ (เฉพาะยังไม่ถูกจัดส่ง/ยังไม่มี carrier & tracking_code)
+  async function cancelOrder(orderId) {
+    if (!window.confirm("ต้องการยกเลิกคำสั่งซื้อนี้ใช่ไหม?")) return;
+    try {
+      const res = await fetch(`${API_BASE}/api/orders/${orderId}/cancel`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ buyer_id: user?.user_id }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const t = await res.text();
+        alert(t || "ยกเลิกคำสั่งซื้อไม่สำเร็จ");
+        return;
+      }
+      await reloadMine();
+    } catch (e) {
+      console.error("cancel order error:", e);
+      alert("เกิดข้อผิดพลาดในการยกเลิก");
+    }
+  }
+
   useEffect(() => {
     if (!user) {
       nav("/login", { state: { from: "/my-orders" } });
@@ -165,11 +194,8 @@ export default function MyOrdersPage() {
       try {
         setLoading(true);
         setErr("");
-        const res = await fetch(`${API_BASE}/api/my-orders?buyer_id=${user.user_id}`);
-        if (!res.ok) throw new Error(await res.text());
-        const data = await res.json();
-        setRows(Array.isArray(data) ? data : []);
-      } catch (e) {
+        await reloadMine();
+      } catch {
         setErr("โหลดรายการคำสั่งซื้อไม่สำเร็จ");
       } finally {
         setLoading(false);
@@ -338,6 +364,17 @@ export default function MyOrdersPage() {
                       updatedAt={o.tracking_updated_at}
                     />
 
+                    {/* ปุ่มยกเลิก (ลูกค้า) — แสดงเฉพาะยังไม่ถูกเลือกขนส่งและยัง pending */}
+                    {(o.status === "pending" && !o.carrier && !o.tracking_code) && (
+                      <button
+                        onClick={(e) => { e.preventDefault(); cancelOrder(o.order_id); }}
+                        className="inline-flex items-center gap-2 px-3 h-9 rounded-lg bg-rose-600 text-white hover:bg-rose-700 text-sm"
+                        title="ยกเลิกคำสั่งซื้อนี้"
+                      >
+                        <FiX /> ยกเลิกคำสั่งซื้อ
+                      </button>
+                    )}
+
                     {/* ปุ่มช่วยเหลืออัปสลิป (เฉพาะโอนและยังไม่ paid) */}
                     {o.payment_method !== "cod" &&
                       (o.payment_status === "unpaid" ||
@@ -372,7 +409,7 @@ export default function MyOrdersPage() {
 /* ===== Subcomponents ===== */
 function SummaryCard({ title, value }) {
   return (
-    <div className="rounded-xl border p-4 bg-white shadow-sm hover:shadow-md transition">
+    <div className="rounded-xl border p-4 bg-white shadowสม hover:shadow-md transition">
       <div className="text-sm text-neutral-500">{title}</div>
       <div className="text-2xl font-semibold">{value}</div>
     </div>

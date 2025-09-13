@@ -920,6 +920,7 @@ app.get('/api/my-orders', async (req, res) => {
   }
 });
 
+
 /* ========= รายละเอียดคำสั่งซื้อ ========= */
 app.get('/api/orders/:id', async (req, res) => {
   try {
@@ -956,7 +957,108 @@ app.get('/api/orders/:id', async (req, res) => {
     console.error('order detail error:', err);
     res.status(500).json({ message: 'server error' });
   }
-});/* ========= Admin: รวมรายการ + ชื่อ/รูป ========= */
+});
+/* ลูกค้ายกเลิกออเดอร์ (ยกเลิกได้เฉพาะ: status='pending' และยังไม่มี carrier/track) */
+app.put('/api/orders/:id/cancel', async (req, res) => {
+  const client = await pool.connect();
+  try {
+    const id = Number(req.params.id);
+    const buyerId = Number(req.body?.buyer_id); // หรืออ่านจาก session/auth
+
+    if (!Number.isFinite(id))      return res.status(400).json({ message: 'invalid order id' });
+    if (!Number.isFinite(buyerId)) return res.status(400).json({ message: 'invalid buyer id' });
+
+    await client.query('BEGIN');
+
+    // ล็อกแถว order
+    const cur = await client.query(
+      `SELECT order_id, buyer_id, status, carrier, tracking_code, cancelled_restocked_at
+         FROM orders
+        WHERE order_id = $1
+        FOR UPDATE`,
+      [id]
+    );
+    if (!cur.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'not found' });
+    }
+    const ord = cur.rows[0];
+
+    // สิทธิ์และเงื่อนไขยกเลิก
+    const canCancel =
+      ord.buyer_id === buyerId &&
+      ord.status === 'pending' &&
+      (!ord.carrier || ord.carrier === '') &&
+      (!ord.tracking_code || ord.tracking_code === '');
+
+    if (!canCancel) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ message: 'คำสั่งซื้อนี้ไม่สามารถยกเลิกได้แล้ว' });
+    }
+
+    // คืนสต๊อกครั้งเดียว (กันซ้ำด้วย cancelled_restocked_at)
+    if (!ord.cancelled_restocked_at) {
+      const itemsQ = await client.query(
+        `SELECT item_type, item_id, quantity
+           FROM order_details
+          WHERE order_id = $1`,
+        [id]
+      );
+
+      // ✅ ใช้ product_id ตามสคีมาของโปรเจ็กต์นี้
+      async function incProductStock(productId, qty) {
+        await client.query(
+          `UPDATE products
+             SET stock = COALESCE(stock,0) + $2
+           WHERE product_id = $1`,
+          [productId, qty]
+        );
+      }
+
+      // ถ้าใช้ stock ใน rabbits
+      async function incRabbitStock(rabbitId, qty) {
+        await client.query(
+          `UPDATE rabbits
+             SET stock = COALESCE(stock,0) + $2
+           WHERE rabbit_id = $1`,
+          [rabbitId, qty]
+        );
+        // ถ้าโปรเจ็กต์คุณ "ไม่ใช้ stock" แต่ใช้สถานะ available/sold ให้ใช้แบบนี้แทน:
+        // await client.query(`UPDATE rabbits SET status='available' WHERE rabbit_id=$1`, [rabbitId]);
+      }
+
+      for (const it of itemsQ.rows) {
+        const qty = Math.max(1, Number(it.quantity) || 0);
+        if (it.item_type === 'rabbit') {
+          await incRabbitStock(it.item_id, qty);
+        } else {
+          // pet-food / equipment / product → คืนเข้า products โดยอิง product_id
+          await incProductStock(it.item_id, qty);
+        }
+      }
+    }
+
+    // อัปเดตสถานะเป็น cancelled + ประทับเวลา กันคืนซ้ำ
+    const upd = await client.query(
+      `UPDATE orders
+          SET status = 'cancelled',
+              cancelled_restocked_at = COALESCE(cancelled_restocked_at, NOW())
+        WHERE order_id = $1
+        RETURNING *`,
+      [id]
+    );
+
+    await client.query('COMMIT');
+    return res.json(upd.rows[0]);
+  } catch (e) {
+    console.error('cancel my order error:', e);
+    try { await client.query('ROLLBACK'); } catch {}
+    return res.status(500).json({ message: 'failed to cancel order' });
+  } finally {
+    client.release();
+  }
+});
+/* ========= Admin: รวมรายการ + ชื่อ/รูป ========= */
 app.get('/api/admin/orders', async (_req, res) => {
   try {
     const q = await pool.query(`
