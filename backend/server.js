@@ -984,12 +984,12 @@ app.put('/api/orders/:id/cancel', async (req, res) => {
     }
     const ord = cur.rows[0];
 
-    // สิทธิ์และเงื่อนไขยกเลิก
-    const canCancel =
-      ord.buyer_id === buyerId &&
-      ord.status === 'pending' &&
-      (!ord.carrier || ord.carrier === '') &&
-      (!ord.tracking_code || ord.tracking_code === '');
+   // สิทธิ์และเงื่อนไขยกเลิก
+const canCancel =
+  ord.buyer_id === buyerId &&
+  ['pending', 'ready_to_ship'].includes(ord.status) &&   // ⬅️ เดิม: ord.status === 'pending'
+  (!ord.carrier || ord.carrier === '') &&
+  (!ord.tracking_code || ord.tracking_code === '');
 
     if (!canCancel) {
       await client.query('ROLLBACK');

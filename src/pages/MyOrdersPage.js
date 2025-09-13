@@ -1,5 +1,5 @@
 // src/pages/MyOrdersPage.jsx
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import {
@@ -156,14 +156,14 @@ export default function MyOrdersPage() {
   const [err, setErr] = useState("");
   const [statusFilter, setStatusFilter] = useState("all");
 
-  // helper: โหลดรายการของฉัน (ใช้ซ้ำหลังยกเลิก)
-  async function reloadMine() {
+  // helper: โหลดรายการของฉัน (ใช้ useCallback ป้องกัน ESLint warning)
+  const reloadMine = useCallback(async () => {
     const res = await fetch(`${API_BASE}/api/my-orders?buyer_id=${user.user_id}`);
     const data = await res.json();
     setRows(Array.isArray(data) ? data : []);
-  }
+  }, [user?.user_id]);
 
-  // ลูกค้ายกเลิกออเดอร์ (เฉพาะยังไม่ถูกจัดส่ง/ยังไม่มี carrier & tracking_code)
+  // ลูกค้ายกเลิกออเดอร์ (ยกเลิกได้ทั้ง pending และ ready_to_ship ถ้ายังไม่มี carrier/tracking)
   async function cancelOrder(orderId) {
     if (!window.confirm("ต้องการยกเลิกคำสั่งซื้อนี้ใช่ไหม?")) return;
     try {
@@ -201,7 +201,7 @@ export default function MyOrdersPage() {
         setLoading(false);
       }
     })();
-  }, [user, nav]);
+  }, [user, nav, reloadMine]);
 
   const sortedAndFiltered = useMemo(() => {
     const sorted = [...rows].sort((a, b) => new Date(b.order_date) - new Date(a.order_date));
@@ -269,7 +269,7 @@ export default function MyOrdersPage() {
         </div>
       </div>
 
-      {/* Filters - segmented */}
+      {/* Filters */}
       <div className="w-full overflow-x-auto">
         <div className="inline-flex rounded-full border bg-white p-1 shadow-sm">
           {FILTERS.map(({ key, label }) => (
@@ -327,7 +327,7 @@ export default function MyOrdersPage() {
                       <OrderStepper status={o.status} />
                     </div>
 
-                    {/* รูปสินค้าทั้งหมด + รายชื่อ */}
+                    {/* รูปสินค้า + รายชื่อ */}
                     {Array.isArray(o.items) && o.items.length > 0 && (
                       <>
                         <div className="mt-3 flex flex-wrap gap-2">
@@ -364,8 +364,8 @@ export default function MyOrdersPage() {
                       updatedAt={o.tracking_updated_at}
                     />
 
-                    {/* ปุ่มยกเลิก (ลูกค้า) — แสดงเฉพาะยังไม่ถูกเลือกขนส่งและยัง pending */}
-                    {(o.status === "pending" && !o.carrier && !o.tracking_code) && (
+                    {/* ปุ่มยกเลิก (ลูกค้า) — ยกเลิกได้ถ้า pending หรือ ready_to_ship และยังไม่มี carrier/tracking */}
+                    {(["pending", "ready_to_ship"].includes(o.status) && !o.carrier && !o.tracking_code) && (
                       <button
                         onClick={(e) => { e.preventDefault(); cancelOrder(o.order_id); }}
                         className="inline-flex items-center gap-2 px-3 h-9 rounded-lg bg-rose-600 text-white hover:bg-rose-700 text-sm"
@@ -375,14 +375,14 @@ export default function MyOrdersPage() {
                       </button>
                     )}
 
-                    {/* ปุ่มช่วยเหลืออัปสลิป (เฉพาะโอนและยังไม่ paid) */}
+                    {/* ปุ่มช่วยเหลืออัปสลิป (โอน + ยังไม่ paid) */}
                     {o.payment_method !== "cod" &&
                       (o.payment_status === "unpaid" ||
                         o.payment_status === "submitted" ||
                         o.payment_status === "rejected" ||
                         !o.payment_status) && (
                         <a
-                          href="/checkout" // TODO: ปรับเป็นหน้าที่อัปโหลดสลิปจริงของโปรเจกต์
+                          href="/checkout"
                           className="inline-flex items-center gap-2 px-3 h-9 rounded-lg border bg-white hover:bg-neutral-50 text-sm"
                           onClick={(e) => e.stopPropagation()}
                           title="ไปอัปโหลดสลิป/ชำระเงิน"
@@ -405,11 +405,10 @@ export default function MyOrdersPage() {
     </div>
   );
 }
-
-/* ===== Subcomponents ===== */
+//* ===== Subcomponents ===== */
 function SummaryCard({ title, value }) {
   return (
-    <div className="rounded-xl border p-4 bg-white shadowสม hover:shadow-md transition">
+    <div className="rounded-xl border p-4 bg-white shadow-sm hover:shadow-md transition">
       <div className="text-sm text-neutral-500">{title}</div>
       <div className="text-2xl font-semibold">{value}</div>
     </div>
