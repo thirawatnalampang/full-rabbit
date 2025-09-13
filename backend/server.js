@@ -1000,62 +1000,120 @@ app.get('/api/admin/orders', async (_req, res) => {
     res.status(500).json({ message: 'failed to fetch orders' });
   }
 });
-/* ========= Admin: อัปเดตสถานะ/ขนส่ง/เลขพัสดุ ========= */
+/* ========= Admin: อัปเดตสถานะ/ขนส่ง/เลขพัสดุ + คืนสต๊อกเมื่อยกเลิก ========= */
 app.put('/api/admin/orders/:id', async (req, res) => {
+  const client = await pool.connect();
   try {
     const { id } = req.params;
     const { status, carrier, tracking_code, payment_status } = req.body;
 
-    // อ่านของเดิม
-    const cur = await pool.query(
-      `SELECT payment_method, payment_status, tracking_code FROM orders WHERE order_id=$1`,
+    await client.query('BEGIN');
+
+    // อ่านออเดอร์ปัจจุบัน (lock แถว)
+    const cur = await client.query(
+      `SELECT order_id, status, payment_method, payment_status, tracking_code, cancelled_restocked_at
+       FROM orders WHERE order_id=$1 FOR UPDATE`,
       [id]
     );
-    if (!cur.rowCount) return res.status(404).json({ message: 'not found' });
-
+    if (!cur.rowCount) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ message: 'not found' });
+    }
     const prev = cur.rows[0];
-    let newPayStatus = payment_status ?? prev.payment_status;
 
-    // กฎ COD: ถ้าส่งเป็น "done" → ถือว่าจ่ายแล้ว
+    // กำหนด payment_status ใหม่ (คงกฎ COD done => paid)
+    let newPayStatus = payment_status ?? prev.payment_status;
     if (prev.payment_method === 'cod' && status === 'done') {
       newPayStatus = 'paid';
     }
 
-    // ตรวจว่า tracking เปลี่ยนไหม
+    // ตรวจว่า tracking เปลี่ยนไหม → จะตั้ง tracking_updated_at
     const trackingChanged =
       typeof tracking_code === 'string' && tracking_code !== prev.tracking_code;
 
-    const q = await pool.query(
-      `
-      UPDATE orders
-      SET
-        status               = COALESCE($1, status),
-        carrier              = COALESCE($2, carrier),
-        tracking_code        = COALESCE($3, tracking_code),
-        tracking_updated_at  = CASE
-                                  WHEN $4::boolean = TRUE THEN NOW()
-                                  ELSE tracking_updated_at
-                                END,
-        payment_status       = $5
-      WHERE order_id = $6
-      RETURNING *;
-      `,
+    // ถ้าเปลี่ยนเป็น "cancelled" และยังไม่เคยคืนสต๊อกมาก่อน → คืนสต๊อก
+    const willCancel = status === 'cancelled';
+    if (willCancel && prev.status !== 'cancelled' && !prev.cancelled_restocked_at) {
+      // ดึงรายการสินค้าในออเดอร์
+      const itemsQ = await client.query(
+        `SELECT item_type, item_id, quantity
+         FROM order_details
+         WHERE order_id = $1`,
+        [id]
+      );
+
+      for (const row of itemsQ.rows) {
+        const qty = Math.max(1, Number(row.quantity) || 0);
+        if (row.item_type === 'rabbit') {
+          // เคสกระต่าย: ถ้ามีคอลัมน์ stock ให้ +stock, ถ้าไม่มี ให้เปลี่ยนสถานะกลับ available
+          // (เลือกแบบไหนก็ได้ตามสคีมาคุณ — ด้านล่างพยายามรองรับทั้งสองแบบ)
+          // แบบมี stock:
+          await client.query(
+            `UPDATE rabbits
+               SET stock = COALESCE(stock,0) + $2
+             WHERE rabbit_id = $1`,
+            [row.item_id, qty]
+          );
+          // แบบไม่มี stock (คอมเมนต์ไว้ ถ้าคุณใช้สถานะ)
+          // await client.query(
+          //   `UPDATE rabbits SET status='available'
+          //     WHERE rabbit_id=$1`,
+          //   [row.item_id]
+          // );
+        } else if (row.item_type === 'pet-food' || row.item_type === 'equipment') {
+          // สินค้าทั่วไป → คืน stock
+          await client.query(
+            `UPDATE products
+               SET stock = COALESCE(stock,0) + $2
+             WHERE product_id = $1`,
+            [row.item_id, qty]
+          );
+        }
+      }
+    }
+
+    // อัปเดต orders
+    const upd = await client.query(
+      `UPDATE orders
+         SET
+           status              = COALESCE($1, status),
+           carrier             = COALESCE($2, carrier),
+           tracking_code       = COALESCE($3, tracking_code),
+           tracking_updated_at = CASE WHEN $4::boolean = TRUE THEN NOW()
+                                      ELSE tracking_updated_at END,
+           payment_status      = $5,
+           cancelled_restocked_at = CASE
+             WHEN $6::boolean = TRUE
+               AND $7::text <> 'cancelled'
+               AND cancelled_restocked_at IS NULL
+             THEN NOW()
+             ELSE cancelled_restocked_at
+           END
+       WHERE order_id = $8
+       RETURNING *`,
       [
         status ?? null,
         carrier ?? null,
         tracking_code ?? null,
-        trackingChanged,     // $4
-        newPayStatus,        // $5
-        id                   // $6
+        trackingChanged,          // $4
+        newPayStatus,             // $5
+        willCancel,               // $6
+        prev.status,              // $7
+        id                        // $8
       ]
     );
 
-    res.json(q.rows[0]);
+    await client.query('COMMIT');
+    return res.json(upd.rows[0]);
   } catch (err) {
     console.error('update order error:', err);
+    try { await client.query('ROLLBACK'); } catch {}
     res.status(500).json({ message: 'failed to update order' });
+  } finally {
+    client.release();
   }
 });
+
 
 /* ========= Admin: อนุมัติ/ปฏิเสธสลิป ========= */
 app.put('/api/admin/orders/:id/payment', async (req, res) => {
@@ -1070,6 +1128,33 @@ app.put('/api/admin/orders/:id/payment', async (req, res) => {
     res.json(q.rows[0]);
   } catch (err) { console.error('payment update error:', err); res.status(500).json({ message: 'failed to update payment' }); }
 });
+
+
+// Admin: ยกเลิกของคืน
+app.put('/api/admin/orders/:id/return', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { note } = req.body;
+
+    const q = await pool.query(
+      `UPDATE orders
+         SET return_status       = 'cancelled',
+             return_note_admin   = COALESCE($2, return_note_admin),
+             return_cancelled_at = NOW(),
+             return_cancelled_by = 'admin'
+       WHERE order_id = $1
+       RETURNING *`,
+      [id, note ?? null]
+    );
+
+    if (!q.rowCount) return res.status(404).json({ message: 'not found' });
+    res.json(q.rows[0]);
+  } catch (err) {
+    console.error('cancel return error:', err);
+    res.status(500).json({ message: 'failed to cancel return' });
+  }
+});
+
 
 /* ===================== Health ===================== */
 app.get('/', (_req,res)=>res.send('OK'));
