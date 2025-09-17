@@ -108,62 +108,53 @@ export default function EditRabbitForm() {
     setFile(f);
     setPreview(URL.createObjectURL(f));
   };
+const handleSubmit = async (e) => {
+  e.preventDefault();
+  if (saving) return;
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (saving) return;
+  if (!String(form.name).trim()) return alert("กรุณากรอกชื่อกระต่าย");
+  if (form.price === "" || Number(form.price) < 0) return alert("กรุณากรอกราคา (>= 0)");
+  if (form.stock === "" || Number(form.stock) < 0) return alert("กรุณากรอกสต๊อก (>= 0)");
+  if (form.is_parent && !form.parent_role) return alert("เลือกบทบาทพ่อ/แม่พันธุ์");
 
-    if (!String(form.name).trim()) return alert("กรุณากรอกชื่อกระต่าย");
-    if (form.price === "" || Number(form.price) < 0) return alert("กรุณากรอกราคา (>= 0)");
-    if (form.stock === "" || Number(form.stock) < 0) return alert("กรุณากรอกสต๊อก (>= 0)");
-    if (form.is_parent && !form.parent_role) return alert("เลือกบทบาทพ่อ/แม่พันธุ์");
+  setSaving(true);
+  try {
+    // ✅ เตรียม payload
+    const payload = {
+      name: String(form.name).trim(),
+      breed: form.breed || null,
+      age: form.age === "" ? null : Number(form.age),
+      gender: form.gender || "male",
+      price: Number(form.price),
+      description: form.description || null,
+      status: form.status || "available",
+      stock: Number(form.stock),
 
-    setSaving(true);
-    try {
-      let image_url = form.image_url;
+      is_parent: Boolean(form.is_parent),
+      parent_role: form.is_parent ? form.parent_role || null : null,
+      available_date: form.is_parent ? (form.available_date || null) : null,
+      weight: form.weight === "" ? null : Number(form.weight),
+    };
 
-      if (file) {
-        const fd = new FormData();
-        fd.append("profileImage", file);
-        const up = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: fd });
-        if (!up.ok) throw new Error("อัปโหลดรูปไม่สำเร็จ");
-        const r = await up.json();
-        image_url = r.url;
-      }
+    // ✅ ใช้ FormData
+    const fd = new FormData();
+    fd.append("data", JSON.stringify(payload));
+    if (file) fd.append("image", file); // <<< ต้องชื่อ image
 
-      const payload = {
-        name: String(form.name).trim(),
-        breed: form.breed || null,
-        age: form.age === "" ? null : Number(form.age),
-        gender: form.gender || "male",
-        price: Number(form.price),
-        description: form.description || null,
-        image_url,
-        status: form.status || "available",
-        stock: Number(form.stock),
+    const res = await fetch(`${API_BASE}/api/admin/rabbits/${rabbitId}`, {
+      method: "PUT",
+      body: fd, // ❌ ห้ามใส่ headers Content-Type เอง
+    });
+    if (!res.ok) throw new Error("อัปเดตไม่สำเร็จ");
 
-        // ✅ breeding fields
-        is_parent: Boolean(form.is_parent),
-        parent_role: form.is_parent ? form.parent_role || null : null,
-        available_date: form.is_parent ? (form.available_date || null) : null,
-        weight: form.weight === "" ? null : Number(form.weight),
-      };
-
-      const res = await fetch(`${API_BASE}/api/admin/rabbits/${rabbitId}`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!res.ok) throw new Error("อัปเดตไม่สำเร็จ");
-
-      alert("แก้ไขข้อมูลสำเร็จ");
-      navigate("/manage-rabbits");
-    } catch (err) {
-      alert(err.message || "เกิดข้อผิดพลาด");
-    } finally {
-      setSaving(false);
-    }
-  };
+    alert("แก้ไขข้อมูลสำเร็จ");
+    navigate("/manage-rabbits");
+  } catch (err) {
+    alert(err.message || "เกิดข้อผิดพลาด");
+  } finally {
+    setSaving(false);
+  }
+};
 
   if (loading) return <p className="text-center mt-10">⏳ กำลังโหลด...</p>;
 

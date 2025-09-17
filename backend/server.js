@@ -45,6 +45,11 @@ if (!fs.existsSync(PROFILE_DIR)) fs.mkdirSync(PROFILE_DIR);
 const SLIPS_DIR = path.join(UPLOAD_ROOT, 'slips');
 if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT);
 if (!fs.existsSync(SLIPS_DIR)) fs.mkdirSync(SLIPS_DIR);
+// ===== extra upload dirs =====
+const RABBITS_DIR  = path.join(UPLOAD_ROOT, 'rabbits');
+const PRODUCTS_DIR = path.join(UPLOAD_ROOT, 'products');
+if (!fs.existsSync(RABBITS_DIR))  fs.mkdirSync(RABBITS_DIR,  { recursive: true });
+if (!fs.existsSync(PRODUCTS_DIR)) fs.mkdirSync(PRODUCTS_DIR, { recursive: true });
 
 // ให้เสิร์ฟไฟล์ในโฟลเดอร์ uploads ทั้งหมด
 app.use('/uploads', express.static(UPLOAD_ROOT));
@@ -73,7 +78,21 @@ const slipStorage = multer.diskStorage({
   },
 });
 const uploadSlip = multer({ storage: slipStorage });
+const rabbitsStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, RABBITS_DIR),
+  filename: (_req, file, cb) => {
+    cb(null, `rabbit_${Date.now()}_${Math.random().toString(36).slice(2)}${path.extname(file.originalname||'')}`);
+  },
+});
+const productsStorage = multer.diskStorage({
+  destination: (_req, _file, cb) => cb(null, PRODUCTS_DIR),
+  filename: (_req, file, cb) => {
+    cb(null, `product_${Date.now()}_${Math.random().toString(36).slice(2)}${path.extname(file.originalname||'')}`);
+  },
+});
 
+const uploadRabbitImage  = multer({ storage: rabbitsStorage });
+const uploadProductImage = multer({ storage: productsStorage });
 /* ===================== Nodemailer ===================== */
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
@@ -137,18 +156,46 @@ app.get('/api/admin/rabbits', async (req, res) => {
   }
 });
 
-app.post('/api/admin/rabbits', async (req, res) => {
-  try {
-    const {
-      name, breed = null, age = null, gender = null,
-      price, description = null, image_url = null, status = 'available',
-      stock = 0,
-      // ฟิลด์ breeding
-      is_parent = false, parent_role = null, available_date = null, weight = null
-    } = req.body;
 
-    if (!name || price == null)
+/* ============== CREATE (รองรับไฟล์อัปโหลด) ============== */
+app.post('/api/admin/rabbits', uploadRabbitImage.single('image'), async (req, res) => {
+  try {
+    // อ่าน body: ถ้าเป็น multipart ให้ parse จากฟิลด์ 'data'; ถ้าเป็น JSON ก็ใช้ req.body
+    let body;
+    if (req.is('multipart/form-data')) {
+      try { body = JSON.parse(req.body?.data || '{}'); } catch { body = {}; }
+    } else {
+      body = req.body || {};
+    }
+
+    let {
+      name,
+      breed = null,
+      age = null,
+      gender = null,
+      price,
+      description = null,
+      image_url = null,
+      status = 'available',
+      stock = 0,
+      is_parent = false, parent_role = null, available_date = null, weight = null,
+    } = body;
+
+    if (!name || price == null) {
       return res.status(400).json({ error: 'name และ price จำเป็น' });
+    }
+
+    // ถ้ามีไฟล์เข้ามาให้เซ็ต image_url เป็น path ใต้ /uploads/rabbits
+    if (req.file) {
+      const base = `${req.protocol}://${req.get('host')}`;
+      image_url = `${base}/uploads/rabbits/${req.file.filename}`;
+    }
+
+    // แปลงค่าที่จำเป็นแบบตรง ๆ (ไม่ใช้ helper)
+    if (typeof price !== 'number') price = Number(price);
+    if (typeof stock !== 'number') stock = Number(stock);
+    if (!Number.isFinite(price)) return res.status(400).json({ error: 'ราคาไม่ถูกต้อง' });
+    if (!Number.isFinite(stock)) stock = 0;
 
     const q = await pool.query(
       `INSERT INTO rabbits (
@@ -162,37 +209,63 @@ app.post('/api/admin/rabbits', async (req, res) => {
       [name, breed, age, gender, price, description, image_url, status, stock,
        is_parent, parent_role, available_date, weight]
     );
+
     res.status(201).json(q.rows[0]);
   } catch (e) {
-    console.error(e);
+    console.error('POST /api/admin/rabbits error:', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
-
-app.put('/api/admin/rabbits/:id', async (req, res) => {
+/* ============== UPDATE (รองรับไฟล์อัปโหลด) ============== */
+app.put('/api/admin/rabbits/:id', uploadRabbitImage.single('image'), async (req, res) => {
   try {
     const { id } = req.params;
-    const {
-      name, breed, age, gender, price, description, image_url, status, stock,
-      is_parent, parent_role, available_date, weight
-    } = req.body;
+
+    let body;
+    if (req.is('multipart/form-data')) {
+      try { body = JSON.parse(req.body?.data || '{}'); } catch { body = {}; }
+    } else {
+      body = req.body || {};
+    }
+
+    let {
+      name = null, breed = null, age = null, gender = null,
+      price = null, description = null, image_url = null, status = null, stock = null,
+      is_parent = null, parent_role = null, available_date = null, weight = null
+    } = body;
+
+    // ถ้ามีไฟล์ใหม่ → override image_url
+    if (req.file) {
+      const base = `${req.protocol}://${req.get('host')}`;
+      image_url = `${base}/uploads/rabbits/${req.file.filename}`;
+    }
+
+    // แปลงเลขแบบตรง ๆ เฉพาะที่ส่งมา
+    if (price !== null && price !== undefined) {
+      if (typeof price !== 'number') price = Number(price);
+      if (!Number.isFinite(price)) price = null;
+    }
+    if (stock !== null && stock !== undefined) {
+      if (typeof stock !== 'number') stock = Number(stock);
+      if (!Number.isFinite(stock)) stock = null;
+    }
 
     const q = await pool.query(
       `UPDATE rabbits SET
-         name        = COALESCE($1, name),
-         breed       = COALESCE($2, breed),
-         age         = COALESCE($3, age),
-         gender      = COALESCE($4, gender),
-         price       = COALESCE($5, price),
-         description = COALESCE($6, description),
-         image_url   = COALESCE($7, image_url),
-         status      = COALESCE($8, status),
-         stock       = COALESCE($9, stock),
-         is_parent   = COALESCE($10, is_parent),
-         parent_role = COALESCE($11, parent_role),
+         name           = COALESCE($1,  name),
+         breed          = COALESCE($2,  breed),
+         age            = COALESCE($3,  age),
+         gender         = COALESCE($4,  gender),
+         price          = COALESCE($5,  price),
+         description    = COALESCE($6,  description),
+         image_url      = COALESCE($7,  image_url),
+         status         = COALESCE($8,  status),
+         stock          = COALESCE($9,  stock),
+         is_parent      = COALESCE($10, is_parent),
+         parent_role    = COALESCE($11, parent_role),
          available_date = COALESCE($12, available_date),
-         weight      = COALESCE($13, weight)
+         weight         = COALESCE($13, weight)
        WHERE rabbit_id = $14
        RETURNING rabbit_id, name, breed, age, gender, price,
                  description, image_url, status, stock,
@@ -200,10 +273,11 @@ app.put('/api/admin/rabbits/:id', async (req, res) => {
       [name, breed, age, gender, price, description, image_url, status, stock,
        is_parent, parent_role, available_date, weight, id]
     );
-    if (q.rowCount === 0) return res.status(404).json({ error: 'not found' });
+
+    if (!q.rowCount) return res.status(404).json({ error: 'not found' });
     res.json(q.rows[0]);
   } catch (e) {
-    console.error(e);
+    console.error('PUT /api/admin/rabbits/:id error:', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
@@ -368,19 +442,42 @@ app.get('/api/admin/products', async (req, res) => {
   }
 });
 
-// ===== CREATE PRODUCT =====
-app.post('/api/admin/products', async (req, res) => {
+// ===== CREATE PRODUCT (รองรับอัปโหลดไฟล์) =====
+app.post('/api/admin/products', uploadProductImage.single('image'), async (req, res) => {
   try {
-    const {
-      name, category, price, stock,
+    // อ่าน body: ถ้า multipart ให้ parse จาก 'data'; ถ้า JSON ใช้ req.body
+    let body;
+    if (req.is('multipart/form-data')) {
+      try { body = JSON.parse(req.body?.data || '{}'); } catch { body = {}; }
+    } else {
+      body = req.body || {};
+    }
+
+    let {
+      name,
+      category,
+      price,
+      stock,
       description = null,
-      image_url = null,
-      status = 'available'
-    } = req.body;
+      image_url = null,       // เผื่อส่ง URL เอง
+      status = 'available',
+    } = body;
 
     if (!name || !price || !category) {
       return res.status(400).json({ error: 'name, price, category จำเป็น' });
     }
+
+    // ถ้ามีไฟล์ -> อัปเดต image_url เป็น path ใต้ /uploads/products
+    if (req.file) {
+      const base = `${req.protocol}://${req.get('host')}`;
+      image_url = `${base}/uploads/products/${req.file.filename}`;
+    }
+
+    // แปลงเลขแบบตรง ๆ
+    if (typeof price !== 'number') price = Number(price);
+    if (typeof stock !== 'number') stock = Number(stock);
+    if (!Number.isFinite(price)) return res.status(400).json({ error: 'ราคาไม่ถูกต้อง' });
+    if (!Number.isFinite(stock)) stock = 0;
 
     const q = await pool.query(
       `INSERT INTO products (name, category, price, stock, description, image_url, status, created_at, updated_at)
@@ -391,34 +488,52 @@ app.post('/api/admin/products', async (req, res) => {
 
     res.status(201).json(q.rows[0]);
   } catch (e) {
-    console.error('POST /api/admin/products', e);
+    console.error('POST /api/admin/products error:', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
 
 
-// PUT /api/admin/products/:id
-app.put('/api/admin/products/:id', async (req, res) => {
+// ===== UPDATE PRODUCT (รองรับอัปโหลดไฟล์) =====
+app.put('/api/admin/products/:id', uploadProductImage.single('image'), async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!Number.isFinite(id)) {
       return res.status(400).json({ error: 'invalid product id' });
     }
 
-    // ดึงค่าจาก body (ถ้าไม่ได้ส่งมาก็ปล่อยเป็น null ให้ COALESCE ข้าม)
+    let body;
+    if (req.is('multipart/form-data')) {
+      try { body = JSON.parse(req.body?.data || '{}'); } catch { body = {}; }
+    } else {
+      body = req.body || {};
+    }
+
     let {
       name = null,
       category = null,
       price = null,
       stock = null,
       description = null,
-      image_url = null,
+      image_url = null,   // ถ้าส่ง URL ใหม่เอง
       status = null,
-    } = req.body || {};
+    } = body;
 
-    // กัน NaN สำหรับ number fields
-    price = Number.isFinite(Number(price)) ? Number(price) : null;
-    stock = Number.isInteger(Number(stock)) ? Number(stock) : null;
+    // ถ้ามีไฟล์ใหม่ -> override image_url ให้เป็นของ products
+    if (req.file) {
+      const base = `${req.protocol}://${req.get('host')}`;
+      image_url = `${base}/uploads/products/${req.file.filename}`;
+    }
+
+    // กัน NaN สำหรับ number fields เฉพาะที่ส่งมา
+    if (price !== null && price !== undefined) {
+      if (typeof price !== 'number') price = Number(price);
+      if (!Number.isFinite(price)) price = null;
+    }
+    if (stock !== null && stock !== undefined) {
+      if (typeof stock !== 'number') stock = Number(stock);
+      if (!Number.isFinite(stock)) stock = null;
+    }
 
     const q = await pool.query(
       `UPDATE products SET
@@ -438,7 +553,7 @@ app.put('/api/admin/products/:id', async (req, res) => {
     if (!q.rowCount) return res.status(404).json({ error: 'not found' });
     res.json(q.rows[0]);
   } catch (e) {
-    console.error(e);
+    console.error('PUT /api/admin/products/:id error:', e);
     res.status(500).json({ error: 'Server error' });
   }
 });

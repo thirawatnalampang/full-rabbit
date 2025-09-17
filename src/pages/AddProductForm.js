@@ -18,6 +18,15 @@ export default function AddProductForm() {
   const handleImageUpload = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    const okTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+    if (!okTypes.includes(f.type)) {
+      alert("อัปโหลดได้เฉพาะไฟล์ jpg, png, webp");
+      return;
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      alert("ขนาดไฟล์ต้องไม่เกิน 5MB");
+      return;
+    }
     setFile(f);
     setPreview(URL.createObjectURL(f));
   };
@@ -31,43 +40,29 @@ export default function AddProductForm() {
     try {
       setSubmitting(true);
 
-      // 1) Upload image (ถ้ามี)
-      let image_url = "";
-      if (file) {
-        const fd = new FormData();
-        fd.append("profileImage", file);
-        const res = await fetch(`${API_BASE}/api/upload`, {
-          method: "POST",
-          body: fd,
-        });
-        if (!res.ok) throw new Error("อัปโหลดรูปไม่สำเร็จ");
-        const r = await res.json();
-        image_url = r.url;
-      }
-
-      // 2) Save product
-      const payload = {
-
+      // ✅ payload ฟิลด์ข้อมูล
+      const data = {
         name,
         category,
         price: Number(price),
         stock: Number(stock),
         description: description || null,
-        image_url,
         status: "available",
       };
 
+      // ✅ ใช้ FormData ส่งขึ้นไป
+      const fd = new FormData();
+      fd.append("data", JSON.stringify(data));
+      if (file) fd.append("image", file); // ชื่อฟิลด์ต้องเป็น image
+
       const save = await fetch(`${API_BASE}/api/admin/products`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: fd, // ❌ ห้ามใส่ Content-Type เอง
       });
 
       if (!save.ok) throw new Error("บันทึกสินค้าไม่สำเร็จ");
 
       alert("เพิ่มสินค้าเรียบร้อย ✅");
-
-      // 3) Redirect ไปหน้าจัดการสินค้า
       navigate("/manage-products");
     } catch (err) {
       console.error(err);
@@ -110,7 +105,7 @@ export default function AddProductForm() {
         value={name}
         onChange={(e) => setName(e.target.value)}
         className="w-full border px-3 py-2 mb-4 rounded"
-        placeholder=""
+        placeholder="เช่น อาหารกระต่าย"
       />
 
       <label className="block mb-2">หมวดหมู่</label>
@@ -131,7 +126,6 @@ export default function AddProductForm() {
         value={price}
         onChange={(e) => setPrice(e.target.value)}
         className="w-full border px-3 py-2 mb-4 rounded"
-        placeholder=""
       />
 
       <label className="block mb-2">สต๊อกสินค้า</label>
@@ -142,7 +136,6 @@ export default function AddProductForm() {
         value={stock}
         onChange={(e) => setStock(e.target.value)}
         className="w-full border px-3 py-2 mb-4 rounded"
-        placeholder="จำนวนในคลัง"
       />
 
       <label className="block mb-2">รายละเอียดสินค้า</label>
@@ -150,10 +143,9 @@ export default function AddProductForm() {
         value={description}
         onChange={(e) => setDescription(e.target.value)}
         className="w-full border px-3 py-2 mb-4 rounded"
-        placeholder="เขียนรายละเอียดสินค้า..."
       />
 
-      {/* Submit button (ปุ่มเดียว) */}
+      {/* Submit */}
       <div className="mt-4">
         <button
           type="button"

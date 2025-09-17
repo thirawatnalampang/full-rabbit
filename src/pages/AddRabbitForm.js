@@ -40,64 +40,56 @@ export default function AddRabbitForm() {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
+  e.preventDefault();
 
-    if (!name?.trim()) { alert("กรอกชื่อกระต่าย"); return; }
-    if (price === "" || Number(price) < 0) { alert("กรอกราคาให้ถูกต้อง (>= 0)"); return; }
-    if (stock === "" || Number(stock) < 0 || !Number.isInteger(Number(stock))) {
-      alert("กรอกสต๊อกเป็นจำนวนเต็มและไม่ติดลบ"); return;
-    }
-    if (isParent && !parentRole) { alert("เลือกบทบาทพ่อ/แม่พันธุ์"); return; }
+  if (!name?.trim()) { alert("กรอกชื่อกระต่าย"); return; }
+  if (price === "" || Number(price) < 0) { alert("กรอกราคาให้ถูกต้อง (>= 0)"); return; }
+  if (stock === "" || Number(stock) < 0 || !Number.isInteger(Number(stock))) {
+    alert("กรอกสต๊อกเป็นจำนวนเต็มและไม่ติดลบ"); return;
+  }
+  if (isParent && !parentRole) { alert("เลือกบทบาทพ่อ/แม่พันธุ์"); return; }
 
-    try {
-      setSubmitting(true);
+  try {
+    setSubmitting(true);
 
-      let image_url = "";
-      if (file) {
-        const fd = new FormData();
-        fd.append("profileImage", file);
-        const up = await fetch(`${API_BASE}/api/upload`, { method: "POST", body: fd });
-        if (!up.ok) throw new Error(`อัปโหลดรูปไม่สำเร็จ: ${await up.text()}`);
-        const r = await up.json();
-        image_url = r.url;
-      }
+    // ✅ สร้าง payload (ไม่ต้องมี image_url แล้ว)
+    const data = {
+      name: name.trim(),
+      breed: breed?.trim() || null,
+      age: age ? Number(age) : null,
+      gender,
+      price: Number(price),
+      stock: Number(stock),
+      description: description?.trim() || null,
+      status: "available",
+      weight: weight === "" ? null : Number(weight),
+      is_parent: Boolean(isParent),
+      parent_role: isParent ? parentRole : null,
+      available_date: availableDate || null,
+    };
 
-      const payload = {
-        name: name.trim(),
-        breed: breed?.trim() || null,
-        age: age ? Number(age) : null,
-        gender,
-        price: Number(price),
-        stock: Number(stock),
-        description: description?.trim() || null,
-        image_url,
-        status: "available",
+    // ✅ ใช้ multipart/form-data ส่งไฟล์ไปที่ /api/admin/rabbits โดยตรง
+    const fd = new FormData();
+    fd.append("data", JSON.stringify(data));
+    if (file) fd.append("image", file);   // <<< ต้องชื่อ image
 
-        // ✅ ส่งน้ำหนักขึ้นไปด้วย (null ถ้าไม่กรอก)
-        weight: weight === "" ? null : Number(weight),
+    const resp = await fetch(`${API_BASE}/api/admin/rabbits`, {
+      method: "POST",
+      body: fd,               // สำคัญ: ห้ามตั้ง Content-Type เอง ให้เบราว์เซอร์ตั้งให้
+    });
 
-        // ✅ พ่อ/แม่พันธุ์
-        is_parent: Boolean(isParent),
-        parent_role: isParent ? parentRole : null,
-        available_date: availableDate || null,
-      };
+    if (!resp.ok) throw new Error(`บันทึกข้อมูลไม่สำเร็จ: ${await resp.text()}`);
 
-      const save = await fetch(`${API_BASE}/api/admin/rabbits`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-      if (!save.ok) throw new Error(`บันทึกข้อมูลไม่สำเร็จ: ${await save.text()}`);
+    alert("เพิ่มกระต่ายสำเร็จ");
+    navigate("/manage-rabbits");
+  } catch (err) {
+    console.error(err);
+    alert(err.message || "เกิดข้อผิดพลาด");
+  } finally {
+    setSubmitting(false);
+  }
+};
 
-      alert("เพิ่มกระต่ายสำเร็จ");
-      navigate("/manage-rabbits");
-    } catch (err) {
-      console.error(err);
-      alert(err.message || "เกิดข้อผิดพลาด");
-    } finally {
-      setSubmitting(false);
-    }
-  };
 
   return (
     <div className="flex justify-center items-center py-10">

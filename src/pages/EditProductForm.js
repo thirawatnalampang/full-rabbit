@@ -43,6 +43,15 @@ export default function EditProductForm() {
   const handleImageUpload = (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
+    const okTypes = ["image/jpeg", "image/png", "image/webp", "image/jpg"];
+    if (!okTypes.includes(f.type)) {
+      alert("อัปโหลดได้เฉพาะไฟล์ jpg, png, webp");
+      return;
+    }
+    if (f.size > 5 * 1024 * 1024) {
+      alert("ขนาดไฟล์ต้องไม่เกิน 5MB");
+      return;
+    }
     setFile(f);
     setPreview(URL.createObjectURL(f));
   };
@@ -56,34 +65,23 @@ export default function EditProductForm() {
     try {
       setSubmitting(true);
 
-      // อัปโหลดรูปใหม่ถ้ามี
-      let image_url = preview;
-      if (file) {
-        const fd = new FormData();
-        fd.append("profileImage", file);
-        const res = await fetch(`${API_BASE}/api/upload`, {
-          method: "POST",
-          body: fd,
-        });
-        if (!res.ok) throw new Error("อัปโหลดรูปไม่สำเร็จ");
-        const r = await res.json();
-        image_url = r.url;
-      }
-
-      // update สินค้า
-      const payload = {
+      // ✅ เตรียม payload สำหรับฟิลด์ข้อมูล
+      const data = {
         name,
         category,
         price: Number(price),
         stock: Number(stock),
         description: description || null,
-        image_url,
       };
+
+      // ✅ ใช้ FormData ส่งไฟล์และข้อมูลไปที่ /api/admin/products/:id
+      const fd = new FormData();
+      fd.append("data", JSON.stringify(data));
+      if (file) fd.append("image", file); // ต้องชื่อ image ให้ตรงกับ server
 
       const res = await fetch(`${API_BASE}/api/admin/products/${id}`, {
         method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
+        body: fd, // ❌ อย่าตั้ง Content-Type เอง
       });
 
       if (!res.ok) throw new Error("แก้ไขสินค้าไม่สำเร็จ");
