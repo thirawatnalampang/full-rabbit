@@ -445,7 +445,6 @@ app.get('/api/admin/products', async (req, res) => {
 // ===== CREATE PRODUCT (รองรับอัปโหลดไฟล์) =====
 app.post('/api/admin/products', uploadProductImage.single('image'), async (req, res) => {
   try {
-    // อ่าน body: ถ้า multipart ให้ parse จาก 'data'; ถ้า JSON ใช้ req.body
     let body;
     if (req.is('multipart/form-data')) {
       try { body = JSON.parse(req.body?.data || '{}'); } catch { body = {}; }
@@ -459,25 +458,26 @@ app.post('/api/admin/products', uploadProductImage.single('image'), async (req, 
       price,
       stock,
       description = null,
-      image_url = null,       // เผื่อส่ง URL เอง
-      status = 'available',
+      image_url = null, // เผื่อส่ง URL เอง
     } = body;
 
-    if (!name || !price || !category) {
+    if (!name || price == null || !category) {
       return res.status(400).json({ error: 'name, price, category จำเป็น' });
     }
 
-    // ถ้ามีไฟล์ -> อัปเดต image_url เป็น path ใต้ /uploads/products
     if (req.file) {
       const base = `${req.protocol}://${req.get('host')}`;
       image_url = `${base}/uploads/products/${req.file.filename}`;
     }
 
-    // แปลงเลขแบบตรง ๆ
-    if (typeof price !== 'number') price = Number(price);
-    if (typeof stock !== 'number') stock = Number(stock);
+    // แปลงตัวเลข
+    price = Number(price);
+    stock = Number(stock);
     if (!Number.isFinite(price)) return res.status(400).json({ error: 'ราคาไม่ถูกต้อง' });
     if (!Number.isFinite(stock)) stock = 0;
+
+    // ✅ ผูก status กับ stock
+    const status = stock <= 0 ? 'out_of_stock' : 'available';
 
     const q = await pool.query(
       `INSERT INTO products (name, category, price, stock, description, image_url, status, created_at, updated_at)
@@ -515,23 +515,20 @@ app.put('/api/admin/products/:id', uploadProductImage.single('image'), async (re
       price = null,
       stock = null,
       description = null,
-      image_url = null,   // ถ้าส่ง URL ใหม่เอง
-      status = null,
+      image_url = null, // ถ้าส่ง URL เอง
     } = body;
 
-    // ถ้ามีไฟล์ใหม่ -> override image_url ให้เป็นของ products
     if (req.file) {
       const base = `${req.protocol}://${req.get('host')}`;
       image_url = `${base}/uploads/products/${req.file.filename}`;
     }
 
-    // กัน NaN สำหรับ number fields เฉพาะที่ส่งมา
     if (price !== null && price !== undefined) {
-      if (typeof price !== 'number') price = Number(price);
+      price = Number(price);
       if (!Number.isFinite(price)) price = null;
     }
     if (stock !== null && stock !== undefined) {
-      if (typeof stock !== 'number') stock = Number(stock);
+      stock = Number(stock);
       if (!Number.isFinite(stock)) stock = null;
     }
 
@@ -543,11 +540,12 @@ app.put('/api/admin/products/:id', uploadProductImage.single('image'), async (re
          stock       = COALESCE($4, stock),
          description = COALESCE($5, description),
          image_url   = COALESCE($6, image_url),
-         status      = COALESCE($7, status),
+         -- ✅ อัปเดตสถานะตาม stock หลังอัปเดต
+         status      = CASE WHEN COALESCE($4, stock) <= 0 THEN 'out_of_stock' ELSE 'available' END,
          updated_at  = NOW()
-       WHERE product_id = $8
+       WHERE product_id = $7
        RETURNING *`,
-      [name, category, price, stock, description, image_url, status, id]
+      [name, category, price, stock, description, image_url, id]
     );
 
     if (!q.rowCount) return res.status(404).json({ error: 'not found' });
