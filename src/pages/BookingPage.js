@@ -353,12 +353,17 @@ export default function BookingPage() {
                   โอนเงิน/พร้อมเพย์ (แนบสลิป)
                 </label>
               </div>
-
-              {paymentMethod === "bank_transfer" && (
-                <div className="mt-3">
-                  <div className="text-sm text-neutral-600 mb-2">
-                    อัปโหลดสลิป (JPG/PNG)
-                  </div>
+{paymentMethod === "bank_transfer" && (
+  <div className="mt-3">
+    {/* QR Code สำหรับโอนเงิน */}
+    <div className="text-center mb-4">
+      <p className="text-sm text-neutral-600 mb-2">สแกน QR เพื่อชำระเงิน</p>
+      <img
+        src="/images/qrcode.jpg"   // 👉 ใส่ path รูป QR ที่คุณเก็บไว้ใน public/images
+        alt="QR Code สำหรับโอนเงิน"
+        className="w-40 h-40 mx-auto rounded border shadow-sm"
+      />
+    </div>
                   {slipPreview ? (
                     <div className="flex items-center gap-3">
                       <img

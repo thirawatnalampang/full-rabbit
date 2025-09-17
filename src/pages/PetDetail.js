@@ -5,6 +5,14 @@ import { useCart } from "../context/CartContext";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000";
 
+// ✅ helper: แปลงน้ำหนักเป็น กก./กรัม ให้สวยงาม
+const fmtKg = (w) => {
+  const n = Number(w);
+  if (!Number.isFinite(n)) return "ไม่ระบุ";
+  if (n >= 1) return `${Number.isInteger(n) ? n : n.toFixed(1)} กก.`;
+  return `${Math.round(n * 1000)} กรัม`;
+};
+
 export default function PetDetail() {
   const { id } = useParams();
   const navigate = useNavigate();
@@ -47,20 +55,19 @@ export default function PetDetail() {
     if (stock <= 0) return;
 
     addToCart({
-  id: pet.rabbit_id,
-  name: pet.name,
-  price: Number(pet.price),
-  image: pet.image_url,
-  quantity,
-  type: "rabbit",
-  stock: Number(pet.stock),   // ✅ ต้องมีบรรทัดนี้
-});
+      id: pet.rabbit_id,
+      name: pet.name,
+      price: Number(pet.price),
+      image: pet.image_url,
+      quantity,
+      type: "rabbit",
+      stock: Number(pet.stock), // ✅ สำคัญ
+    });
     alert(`เพิ่ม ${pet.name} จำนวน ${quantity} ชิ้น ไปยังตะกร้าแล้ว!`);
   };
 
   if (loading) return <p className="text-center mt-10 text-gray-500">กำลังโหลด...</p>;
-  if (error)
-    return <p className="text-center mt-10 text-red-500">เกิดข้อผิดพลาด: {error}</p>;
+  if (error) return <p className="text-center mt-10 text-red-500">เกิดข้อผิดพลาด: {error}</p>;
   if (!pet) {
     return (
       <div className="max-w-xl mx-auto p-6 text-center mt-10">
@@ -118,7 +125,8 @@ export default function PetDetail() {
       <div className="md:col-span-5">
         <h1 className="text-2xl font-bold mb-2">
           🐰 {pet.name} • {pet.breed || "ไม่ระบุ"} •{" "}
-          {pet.gender === "female" ? "♀ เพศเมีย" : "♂ เพศผู้"}
+          {pet.gender === "female" ? "♀ เพศเมีย" : "♂ เพศผู้"} •{" "}
+          น้ำหนัก: {fmtKg(pet.weight)}
         </h1>
 
         <p className="text-xl font-bold mb-3">
@@ -141,6 +149,26 @@ export default function PetDetail() {
           <p className="text-gray-700 leading-relaxed">
             {pet.description || "กระต่ายน่ารัก สุขภาพดี พร้อมหาบ้านใหม่ 🐇"}
           </p>
+
+          {/* ✅ แสดงข้อมูลหลักแบบสรุป */}
+          <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-gray-600">
+            <div className="bg-white rounded p-2 border">
+              <div className="font-medium">สายพันธุ์</div>
+              <div>{pet.breed || "ไม่ระบุ"}</div>
+            </div>
+            <div className="bg-white rounded p-2 border">
+              <div className="font-medium">เพศ</div>
+              <div>{pet.gender === "female" ? "เพศเมีย" : "เพศผู้"}</div>
+            </div>
+            <div className="bg-white rounded p-2 border">
+              <div className="font-medium">น้ำหนัก</div>
+              <div>{fmtKg(pet.weight)}</div>
+            </div>
+            <div className="bg-white rounded p-2 border">
+              <div className="font-medium">สต๊อก</div>
+              <div>{stock} ตัว</div>
+            </div>
+          </div>
         </div>
 
         {/* จำนวน + Add to cart (ล็อกตามสต๊อก) */}

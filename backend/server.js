@@ -198,13 +198,60 @@ app.put('/api/admin/rabbits/:id', async (req, res) => {
   }
 });
 
+// GET /api/rabbits  (หน้าขายเท่านั้น)
+app.get('/api/rabbits', async (req, res) => {
+  try {
+    const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
+    const limit = Math.max(parseInt(req.query.limit || '12', 10), 1);
+    const offset = (page - 1) * limit;
 
-// 📌 ลบกระต่าย
+    const gender = (req.query.gender || '').toLowerCase();
+    const search = (req.query.search || '').trim();
+
+    const where = [
+      'is_parent = FALSE',          // <- หัวใจของเรื่อง
+      "status = 'available'",
+      'COALESCE(stock,0) > 0'
+    ];
+    const vals = [];
+
+    if (gender === 'male' || gender === 'female') {
+      vals.push(gender);
+      where.push(`LOWER(gender) = $${vals.length}`);
+    }
+    if (search) {
+      vals.push(`%${search.toLowerCase()}%`);
+      where.push(`(LOWER(name) LIKE $${vals.length} OR LOWER(breed) LIKE $${vals.length})`);
+    }
+
+    const whereSql = `WHERE ${where.join(' AND ')}`;
+
+    const totalQ = await pool.query(`SELECT COUNT(*)::int AS total FROM rabbits ${whereSql}`, vals);
+    const total = totalQ.rows[0]?.total || 0;
+
+    vals.push(limit, offset);
+    const rowsQ = await pool.query(
+      `SELECT rabbit_id, name, breed, age, weight, gender, price, stock,
+              image_url, description, status, is_parent
+         FROM rabbits
+       ${whereSql}
+       ORDER BY rabbit_id DESC
+       LIMIT $${vals.length-1} OFFSET $${vals.length}`, vals
+    );
+
+    res.json({ page, limit, total, totalPages: Math.max(1, Math.ceil(total/limit)), items: rowsQ.rows });
+  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+});
+// ลบกระต่ายแบบ hard delete (ได้แน่นอนเพราะ FK เป็น SET NULL แล้ว)
 app.delete('/api/admin/rabbits/:id', async (req, res) => {
   try {
-    const q = await pool.query('DELETE FROM rabbits WHERE rabbit_id = $1', [req.params.id]);
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id)) return res.status(400).json({ error: 'invalid id' });
+
+    const q = await pool.query('DELETE FROM rabbits WHERE rabbit_id = $1', [id]);
     if (q.rowCount === 0) return res.status(404).json({ error: 'not found' });
-    res.json({ ok: true });
+
+    res.json({ ok: true, mode: 'hard_deleted' });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Server error' });
@@ -1610,6 +1657,7 @@ const ALLOWED_PM = new Set(['cod','bank_transfer','wallet','cash']);
 /* ----------------------------------------------------------------
  *  Parents (พ่อ–แม่พันธุ์)  — ONE canonical definition
  * ---------------------------------------------------------------- */
+// ✅ หน้ายืม (พ่อ/แม่พันธุ์)
 app.get('/api/parents', async (req, res) => {
   try {
     const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
@@ -1619,8 +1667,10 @@ app.get('/api/parents', async (req, res) => {
     const gender = (req.query.gender || '').toLowerCase();
     const search = (req.query.search || '').trim();
 
+    // ❌ ไม่ต้องกรอง is_deleted อีกต่อไป
     const where = ['is_parent = TRUE'];
     const vals = [];
+
     if (gender === 'male' || gender === 'female') {
       vals.push(gender);
       where.push(`LOWER(gender) = $${vals.length}`);
@@ -1629,9 +1679,13 @@ app.get('/api/parents', async (req, res) => {
       vals.push(`%${search.toLowerCase()}%`);
       where.push(`(LOWER(name) LIKE $${vals.length} OR LOWER(breed) LIKE $${vals.length})`);
     }
+
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
-    const totalQ = await pool.query(`SELECT COUNT(*)::int AS total FROM rabbits ${whereSql}`, vals);
+    const totalQ = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM rabbits ${whereSql}`,
+      vals
+    );
     const total = totalQ.rows[0]?.total || 0;
 
     vals.push(limit, offset);
@@ -1641,11 +1695,15 @@ app.get('/api/parents', async (req, res) => {
          FROM rabbits
        ${whereSql}
        ORDER BY rabbit_id DESC
-       LIMIT $${vals.length-1} OFFSET $${vals.length}`, vals
+       LIMIT $${vals.length-1} OFFSET $${vals.length}`,
+      vals
     );
 
     res.json({ page, limit, total, totalPages: Math.max(1, Math.ceil(total/limit)), items: rowsQ.rows });
-  } catch (e) { console.error(e); res.status(500).json({ error: 'Server error' }); }
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 app.get('/api/parents/:id', async (req, res) => {

@@ -1,3 +1,4 @@
+// src/components/PetCard.jsx
 import { Link } from 'react-router-dom';
 
 function formatTHB(n) {
@@ -10,15 +11,21 @@ function formatTHB(n) {
 }
 
 export default function PetCard({ pet }) {
-  // pet: { id, name, price, image }
+  const id = pet.id ?? pet.rabbit_id ?? pet.rabbitId;
+  const img = pet.image ?? pet.image_url ?? pet.imageUrl;
+
   return (
-    <div className="rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition p-3 text-center bg-white">
-      <div className="overflow-hidden rounded-2xl">
+    <div className="rounded-2xl border border-gray-200 shadow-sm hover:shadow-md transition bg-white p-3 text-center flex flex-col">
+      {/* ✅ กรอบรูป fix สูง และบังคับให้รูปเต็มกรอบ */}
+      <div className="relative w-full h-56 overflow-hidden rounded-2xl">
         <img
-          src={pet.image || 'https://placehold.co/600x600?text=Rabbit'}
+          src={img || 'https://placehold.co/600x600?text=Rabbit'}
           alt={pet.name}
-          className="w-full h-56 object-cover"
-          onError={(e) => { e.currentTarget.src = 'https://placehold.co/600x600?text=Rabbit'; }}
+          className="absolute inset-0 w-full h-full object-cover"
+          onError={(e) => {
+            e.currentTarget.src = 'https://placehold.co/600x600?text=Rabbit';
+          }}
+          draggable={false}
         />
       </div>
 
@@ -26,7 +33,7 @@ export default function PetCard({ pet }) {
       <p className="mt-1 text-gray-700">ราคา {formatTHB(pet.price)} บาท</p>
 
       <Link
-        to={`/pets/${pet.id}`}
+        to={`/pets/${id}`}
         className="inline-flex items-center justify-center mt-3 px-5 py-2 rounded-full bg-green-600 text-white font-semibold hover:bg-green-700 active:scale-[.99] transition"
       >
         ดูรายละเอียด

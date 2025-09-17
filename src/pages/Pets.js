@@ -22,12 +22,7 @@ export default function Pets() {
     return [];
   };
 
-  const normalizeItem = (r) => ({
-    rabbit_id: r.rabbit_id ?? r.id ?? r.rabbitId ?? r.RABBIT_ID,
-    name: r.name ?? r.rabbit_name ?? r.title ?? '(ไม่มีชื่อ)',
-    price: r.price ?? r.sale_price ?? 0,
-    image_url: r.image_url ?? r.image ?? r.photo_url ?? '',
-  });
+ 
 
   const fetchJSON = async (url) => {
     const res = await fetch(url, {
@@ -47,35 +42,41 @@ export default function Pets() {
     return res.json();
   };
 
-  // --- main loader (useCallback เพื่อแก้ ESLint) ---
-  const loadPets = useCallback(async () => {
-    try {
-      setLoading(true);
-      setError(null);
+  // --- main loader ---
+const loadPets = useCallback(async () => {
+  try {
+    setLoading(true);
+    setError(null);
 
-      // 1) ลอง admin ก่อน (เผื่อใช้งานหลังบ้าน)
-      const adminUrl = `${API_BASE}/api/admin/rabbits?offset=0&limit=1000`;
-      let data;
-      try {
-        data = await fetchJSON(adminUrl);
-      } catch {
-        // 2) ถ้า admin ใช้ไม่ได้ → fallback เป็น public
-        const publicUrl = `${API_BASE}/api/rabbits`;
-        data = await fetchJSON(publicUrl);
-      }
+    // เรียก endpoint public ที่ใช้สำหรับ "หน้าขาย" โดยเฉพาะ
+    const publicUrl = `${API_BASE}/api/rabbits?page=1&limit=1000`;
+    const data = await fetchJSON(publicUrl);
 
-      const arr = normalizeArray(data).map(normalizeItem);
-      setPets(arr);
-      setCurrentPage(1);
-    } catch (err) {
-      console.error(err);
-      setError('โหลดข้อมูลไม่สำเร็จ');
-      setPets([]);
-    } finally {
-      setLoading(false);
-    }
-  }, []);
+    const arrRaw = normalizeArray(data);
 
+    // อัปเดต normalizer ให้เก็บฟิลด์ที่ต้องใช้กรองด้วย
+    const arr = arrRaw.map(r => ({
+      rabbit_id: r.rabbit_id ?? r.id ?? r.rabbitId ?? r.RABBIT_ID,
+      name:      r.name ?? r.rabbit_name ?? r.title ?? '(ไม่มีชื่อ)',
+      price:     Number(r.price ?? r.sale_price ?? 0),
+      image_url: r.image_url ?? r.image ?? r.photo_url ?? '',
+      is_parent: !!(r.is_parent ?? r.IS_PARENT),
+      status:    r.status ?? 'available',
+      stock:     Number(r.stock ?? 0),
+    }))
+    // safety net: ถ้า backend ใครเผลอส่งเกินมา จะถูกกรองที่ฝั่ง client อีกที
+    .filter(x => !x.is_parent && x.status === 'available' && (x.stock ?? 0) > 0);
+
+    setPets(arr);
+    setCurrentPage(1);
+  } catch (err) {
+    console.error(err);
+    setError('โหลดข้อมูลไม่สำเร็จ');
+    setPets([]);
+  } finally {
+    setLoading(false);
+  }
+}, []);
   useEffect(() => {
     loadPets();
   }, [loadPets, location.key]); // ✅ ไม่มี warning แล้ว
