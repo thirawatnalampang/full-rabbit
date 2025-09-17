@@ -59,11 +59,13 @@ export default function Equipment() {
             className="border rounded-lg p-4 shadow hover:shadow-md transition text-center"
           >
             <img
-              src={item.image_url || 'https://placehold.co/200x200?text=No+Image'}
-              alt={item.name}
-              className="w-full h-40 object-cover rounded-lg"
-              onError={(e) => { e.currentTarget.src = 'https://placehold.co/200x200?text=No+Image'; }}
-            />
+  src={item.image_url || 'https://placehold.co/200x200?text=No+Image'}
+  alt={item.name}
+  className="w-full h-40 object-contain rounded-lg bg-white"
+  onError={(e) => {
+    e.currentTarget.src = 'https://placehold.co/200x200?text=No+Image';
+  }}
+/>
             <p className="mt-2 font-semibold">{item.name}</p>
             <p className="text-sm text-gray-600 mb-2">
               ราคา {Number(item.price || 0).toLocaleString()} บาท

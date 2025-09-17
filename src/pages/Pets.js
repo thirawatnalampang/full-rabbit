@@ -114,7 +114,7 @@ const loadPets = useCallback(async () => {
           className="px-4 py-2 border rounded hover:bg-gray-50 active:scale-95 transition"
           title="รีเฟรช"
         >
-          รีเฟรช
+          
         </button>
       </div>
 
