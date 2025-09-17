@@ -317,38 +317,55 @@ export default function CheckoutPage() {
                 <label className={`px-3 py-2 rounded-xl border cursor-pointer ${form.paymentMethod === "bank_transfer" ? "bg-neutral-900 text-white" : "hover:bg-neutral-50"}`}>
                   <input type="radio" className="mr-2" name="paymentMethod" value="bank_transfer"
                     checked={form.paymentMethod === "bank_transfer"} onChange={handleChange}/>
-                  โอนผ่านธนาคาร / พร้อมเพย์
+                  โอนผ่านธนาคาร 1234-7625-899987 / พร้อมเพย์ 0988405158
                 </label>
               </div>
 
-              {form.paymentMethod === "bank_transfer" && (
-                <div className="mt-4">
-                  <label className="block text-sm text-neutral-600 mb-2">แนบสลิปการโอน (จำเป็น)</label>
+{form.paymentMethod === "bank_transfer" && (
+                <div className="mt-4 space-y-4">
+                  {/* ✅ QR Code สำหรับโอน */}
+                  <div className="text-center">
+                    <p className="text-sm text-neutral-600 mb-2">สแกน QR เพื่อชำระเงิน</p>
+                    <img
+                      src="/images/qrcode.jpg"
+                      alt="QR Code สำหรับโอนเงิน"
+                      className="w-48 h-48 mx-auto rounded-xl border shadow-sm"
+                      onError={(e) => { e.currentTarget.style.display = "none"; }}
+                    />
+                    <p className="mt-2 text-xs text-neutral-500">
+                      * หลังโอนเงินแล้ว กรุณาอัปโหลดสลิปเพื่อยืนยัน
+                    </p>
+                  </div>
 
-                  {slipPreview ? (
-                    <div className="flex items-center gap-3">
-                      <img src={slipPreview} alt="slip preview" className="w-28 h-28 object-cover rounded-xl border"/>
-                      <div className="space-x-2">
-                        <button type="button" onClick={() => document.getElementById("slipInput").click()}
-                          className="px-3 py-2 rounded-lg border hover:bg-neutral-50">เปลี่ยนรูป</button>
-                        <button type="button" onClick={removeSlip}
-                          className="px-3 py-2 rounded-lg border border-red-300 text-red-600 hover:bg-red-50">ลบรูป</button>
+                  {/* อัปโหลดสลิป */}
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-2">แนบสลิปการโอน (จำเป็น)</label>
+
+                    {slipPreview ? (
+                      <div className="flex items-center gap-3">
+                        <img src={slipPreview} alt="slip preview" className="w-28 h-28 object-cover rounded-xl border"/>
+                        <div className="space-x-2">
+                          <button type="button" onClick={() => document.getElementById("slipInput").click()}
+                            className="px-3 py-2 rounded-lg border hover:bg-neutral-50">เปลี่ยนรูป</button>
+                          <button type="button" onClick={removeSlip}
+                            className="px-3 py-2 rounded-lg border border-red-300 text-red-600 hover:bg-red-50">ลบรูป</button>
+                        </div>
                       </div>
-                    </div>
-                  ) : (
-                    <button type="button" onClick={() => document.getElementById("slipInput").click()}
-                      className="px-4 py-2 rounded-xl border border-dashed w-full text-left hover:bg-neutral-50">
-                      อัปโหลดสลิป (JPG, PNG)
-                    </button>
-                  )}
+                    ) : (
+                      <button type="button" onClick={() => document.getElementById("slipInput").click()}
+                        className="px-4 py-2 rounded-xl border border-dashed w-full text-left hover:bg-neutral-50">
+                        อัปโหลดสลิป (JPG, PNG)
+                      </button>
+                    )}
 
-                  <input id="slipInput" type="file" accept="image/*" className="hidden" onChange={onPickSlip}/>
-                  <p className="mt-2 text-xs text-neutral-500">* รองรับไฟล์ภาพ .jpg .png ขนาดไม่เกิน ~5MB</p>
+                    <input id="slipInput" type="file" accept="image/*" className="hidden" onChange={onPickSlip}/>
+                    <p className="mt-2 text-xs text-neutral-500">* รองรับไฟล์ภาพ .jpg .png ขนาดไม่เกิน ~5MB</p>
+                  </div>
                 </div>
               )}
-            </section>
 
-            {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-3">{error}</div>}
+              {error && <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl p-3">{error}</div>}
+            </section>
           </div>
 
           {/* ขวา: สรุปคำสั่งซื้อ */}
