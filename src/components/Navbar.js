@@ -42,14 +42,16 @@ export default function Navbar() {
         className="hidden md:flex bg-black text-white p-4 justify-between items-center shadow-md"
         key={user?.user_id || 'guest'}
       >
-        {/* ปุ่มย้อนกลับ */}
-        <button
-          onClick={() => navigate(-1)}
-          className="text-white mr-4 hover:text-teal-300 transition-colors duration-300"
-          title="ย้อนกลับ"
-        >
-          <FaArrowLeft size={26} />
-        </button>
+      {/* ปุ่มย้อนกลับ (ซ่อนถ้าอยู่หน้า Home) */}
+{location.pathname !== "/" && (
+  <button
+    onClick={() => navigate(-1)}
+    className="text-white mr-4 hover:text-teal-300 transition-colors duration-300"
+    title="ย้อนกลับ"
+  >
+    <FaArrowLeft size={26} />
+  </button>
+)}
 
         {/* โลโก้ */}
         <span className="text-2xl font-extrabold tracking-wide text-white">🐾 PetShop</span>
