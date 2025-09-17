@@ -39,6 +39,9 @@ const num = (v) => Number(v || 0);
 
 /* ===================== Static / Upload Dirs ===================== */
 const UPLOAD_ROOT = path.join(__dirname, 'uploads');
+const PROFILE_DIR = path.join(UPLOAD_ROOT, 'profile');
+if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
+if (!fs.existsSync(PROFILE_DIR)) fs.mkdirSync(PROFILE_DIR);
 const SLIPS_DIR = path.join(UPLOAD_ROOT, 'slips');
 if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT);
 if (!fs.existsSync(SLIPS_DIR)) fs.mkdirSync(SLIPS_DIR);
@@ -46,14 +49,21 @@ if (!fs.existsSync(SLIPS_DIR)) fs.mkdirSync(SLIPS_DIR);
 // ให้เสิร์ฟไฟล์ในโฟลเดอร์ uploads ทั้งหมด
 app.use('/uploads', express.static(UPLOAD_ROOT));
 
-/* ========== Multer storages แยกคนละตัว เพื่อไม่ชนชื่อ ========== */
-// โปรไฟล์
 const profileStorage = multer.diskStorage({
-  destination: (_req, _file, cb) => cb(null, UPLOAD_ROOT),
-  filename: (_req, file, cb) => cb(null, Date.now() + path.extname(file.originalname)),
+  destination: (_req, _file, cb) => {
+    const dir = path.join(UPLOAD_ROOT, "profile");
+    // ✅ ถ้าโฟลเดอร์ยังไม่มี ให้สร้าง
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
+    cb(null, dir);
+  },
+  filename: (_req, file, cb) => {
+    cb(null, Date.now() + path.extname(file.originalname));
+  },
 });
-const uploadProfile = multer({ storage: profileStorage });
 
+const uploadProfile = multer({ storage: profileStorage });
 // สลิป
 const slipStorage = multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, SLIPS_DIR),
@@ -92,12 +102,12 @@ const OTP_COOLDOWN_MS = 60 * 1000;
 const genOtp = () => Math.floor(100000 + Math.random() * 900000).toString();
 const now = () => Date.now();
 const cleanupOtp = (email) => delete otpStore[email];
-
 /* ===================== Upload รูปโปรไฟล์ ===================== */
 app.post('/api/upload', uploadProfile.single('profileImage'), (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'ไม่มีไฟล์ถูกอัปโหลด' });
-  const url = `http://localhost:${port}/uploads/${req.file.filename}`;
-  res.json({ url });
+  // ✅ ต้องมี profile/ ในพาธ
+  const url = `http://localhost:${port}/uploads/profile/${req.file.filename}`;
+  res.json({ url, filename: req.file.filename });
 });
 // ========== RABBIT STOCK APIs ==========
 
