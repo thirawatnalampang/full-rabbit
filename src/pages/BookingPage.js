@@ -71,9 +71,33 @@ export default function BookingPage() {
     return d.toISOString().slice(0, 10);
   }, [form.date]);
 
-  const currentStock = freshRabbit?.stock ?? rabbit?.stock ?? 0;
-  const currentStatus = (freshRabbit?.status ?? rabbit?.status) || "available";
-  const isOOS = currentStock <= 0 || currentStatus === "out_of_stock";
+const currentStock = freshRabbit?.stock ?? rabbit?.stock ?? 0;
+
+// แปลงสถานะอังกฤษ -> ไทย
+const STATUS_LABELS = {
+  available: "พร้อมให้เช่า",
+  out_of_stock: "ของหมดชั่วคราว",
+  unavailable: "ไม่พร้อมให้เช่า",
+  breeding: "กำลังยืม",
+  reserved: "ถูกจองแล้ว",
+};
+
+// ค่าดิบจากฐานข้อมูล (อังกฤษ)
+const rawStatus = (freshRabbit?.status ?? rabbit?.status) || "available";
+
+// ใช้เช็ค “ของหมด/ไม่พร้อม” ด้วยค่าดิบภาษาอังกฤษ
+const isOOS =
+  currentStock <= 0 || String(rawStatus).toLowerCase() === "out_of_stock";
+
+// ใช้แสดงผลเป็นไทย (priority: stock = 0 ก่อน)
+let currentStatus;
+if (currentStock <= 0) {
+  currentStatus = "ของหมดชั่วคราว";
+} else {
+  currentStatus =
+    STATUS_LABELS[String(rawStatus).toLowerCase()] || "พร้อมให้เช่า";
+}
+
 
   const canSubmit =
     !!rabbit &&
@@ -233,7 +257,7 @@ export default function BookingPage() {
 
               <div className="mt-3 p-3 rounded-lg bg-neutral-50 border">
                 <div>
-                  💰 ราคาแพ็กพื้นฐาน (ตัวอย่าง): {basePrice.toFixed(2)} บาท /{" "}
+                  💰 ราคาแพ็กพื้นฐาน : {basePrice.toFixed(2)} บาท /{" "}
                   {baseDays} วัน
                 </div>
                 <div>⇒ เฉลี่ย {pricePerDay.toFixed(2)} บาท/วัน</div>
@@ -243,7 +267,7 @@ export default function BookingPage() {
                   </div>
                 ) : (
                   <div className="text-neutral-500 mt-1">
-                    เลือกวันที่เริ่มและวันสิ้นสุด เพื่อคำนวณราคาโดยประมาณ
+                    เลือกวันที่เริ่มและวันสิ้นสุด เพื่อคำนวณราคา
                   </div>
                 )}
               </div>
