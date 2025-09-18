@@ -10,7 +10,7 @@ import {
   FiX,
   FiTruck,
   FiPackage,
-  FiUpload,
+
 } from "react-icons/fi";
 
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000";
@@ -375,23 +375,7 @@ export default function MyOrdersPage() {
                       </button>
                     )}
 
-                    {/* ปุ่มช่วยเหลืออัปสลิป (โอน + ยังไม่ paid) */}
-                    {o.payment_method !== "cod" &&
-                      (o.payment_status === "unpaid" ||
-                        o.payment_status === "submitted" ||
-                        o.payment_status === "rejected" ||
-                        !o.payment_status) && (
-                        <a
-                          href="/checkout"
-                          className="inline-flex items-center gap-2 px-3 h-9 rounded-lg border bg-white hover:bg-neutral-50 text-sm"
-                          onClick={(e) => e.stopPropagation()}
-                          title="ไปอัปโหลดสลิป/ชำระเงิน"
-                        >
-                          <FiUpload />
-                          อัปโหลดสลิป
-                        </a>
-                      )}
-
+                   
                     <div className="font-bold text-emerald-600 whitespace-nowrap">
                       {formatTHB(o.total_amount)}
                     </div>

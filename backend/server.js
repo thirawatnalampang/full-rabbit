@@ -130,31 +130,83 @@ app.post('/api/upload', uploadProfile.single('profileImage'), (req, res) => {
 });
 // ========== RABBIT STOCK APIs ==========
 
+// ========== RABBIT STOCK APIs (search + filters, no real 'category' column) ==========
 app.get('/api/admin/rabbits', async (req, res) => {
   try {
     const page  = Math.max(parseInt(req.query.page || '1', 10), 1);
     const limit = Math.max(parseInt(req.query.limit || '10', 10), 1);
     const offset = (page - 1) * limit;
 
-    const totalQ = await pool.query('SELECT COUNT(*)::int AS total FROM rabbits');
-    const total = totalQ.rows[0].total || 0;
+    const qRaw      = (req.query.q || '').toString().trim();
+    const statusRaw = (req.query.status || '').toString().trim();
+    const genderRaw = (req.query.gender || '').toString().trim().toLowerCase();
+    const catRaw    = (req.query.category || '').toString().trim().toLowerCase(); // 'sale' | 'loan'
+
+    const gender =
+      genderRaw === 'm' ? 'male' :
+      genderRaw === 'f' ? 'female' :
+      (genderRaw === 'male' || genderRaw === 'female') ? genderRaw : '';
+
+    // ✅ ไม่อ้างถึงคอลัมน์ category ที่ไม่มี
+    const catCase = `CASE WHEN is_parent = TRUE THEN 'loan' ELSE 'sale' END`;
+
+    const where = [];
+    const params = [];
+
+    if (qRaw) {
+      params.push(`%${qRaw}%`, `%${qRaw}%`);
+      where.push(`(name ILIKE $${params.length - 1} OR breed ILIKE $${params.length})`);
+    }
+    if (gender) {
+      params.push(gender);
+      where.push(`LOWER(gender) = $${params.length}`);
+    }
+    if (statusRaw) {
+      params.push(statusRaw);
+      where.push(`status = $${params.length}`);
+    }
+    if (catRaw === 'sale' || catRaw === 'loan') {
+      params.push(catRaw);
+      where.push(`${catCase} = $${params.length}`);
+    }
+
+    const whereSQL = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+    const totalQ = await pool.query(
+      `SELECT COUNT(*)::int AS total FROM rabbits ${whereSQL}`,
+      params
+    );
+    const total = totalQ.rows?.[0]?.total || 0;
+
+    const rowsParams = params.slice();
+    rowsParams.push(limit, offset);
 
     const rowsQ = await pool.query(
-      `SELECT rabbit_id, name, breed, age, gender, price,
-              description, image_url, status, stock,
-              is_parent, parent_role, available_date, weight
+      `SELECT
+         rabbit_id, name, breed, age, gender, price,
+         description, image_url, status, stock,
+         is_parent, parent_role, available_date, weight,
+         ${catCase} AS category
        FROM rabbits
+       ${whereSQL}
        ORDER BY rabbit_id ASC
-       LIMIT $1 OFFSET $2`,
-      [limit, offset]
+       LIMIT $${rowsParams.length - 1} OFFSET $${rowsParams.length}`,
+      rowsParams
     );
 
-    res.json({ page, limit, total, totalPages: Math.ceil(total / limit), items: rowsQ.rows });
+    res.json({
+      page,
+      limit,
+      total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      items: rowsQ.rows
+    });
   } catch (e) {
-    console.error(e);
+    console.error('GET /api/admin/rabbits error:', e);
     res.status(500).json({ error: 'Server error' });
   }
 });
+
 
 
 /* ============== CREATE (รองรับไฟล์อัปโหลด) ============== */

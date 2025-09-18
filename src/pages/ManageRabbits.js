@@ -18,12 +18,26 @@ export default function ManageRabbits() {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState(null);
 
+  // 🟢 state สำหรับ search & filter
+  const [search, setSearch] = useState("");
+  const [gender, setGender] = useState("");
+  const [category, setCategory] = useState(""); // 🐇 หมวด: ขาย หรือ ยืม
+
   const loadData = useCallback(
     async (p = page) => {
       try {
         setLoading(true);
         setErr(null);
-        const res = await fetch(`${API_BASE}/api/admin/rabbits?page=${p}&limit=${limit}`);
+
+        const params = new URLSearchParams({
+          page: p,
+          limit,
+        });
+        if (search) params.append("q", search);
+        if (gender) params.append("gender", gender);
+        if (category) params.append("category", category);
+
+        const res = await fetch(`${API_BASE}/api/admin/rabbits?${params.toString()}`);
         if (!res.ok) {
           const text = await res.text();
           throw new Error(`โหลดข้อมูลไม่สำเร็จ (HTTP ${res.status}) ${text}`);
@@ -43,7 +57,7 @@ export default function ManageRabbits() {
         setLoading(false);
       }
     },
-    [page]
+    [page, search, gender, category]
   );
 
   useEffect(() => {
@@ -85,7 +99,47 @@ export default function ManageRabbits() {
         🐇 จัดการกระต่าย
       </h1>
 
-      {/* แถบสรุป + ปุ่ม เพิ่ม บนมือถือเรียงเป็นคอลัมน์ */}
+      {/* ✅ Search + Filter */}
+      <div className="flex flex-col md:flex-row gap-3 mb-5 md:mb-8">
+        <input
+          type="text"
+          placeholder="🔍 ค้นหาชื่อหรือสายพันธุ์..."
+          value={search}
+          onChange={(e) => {
+            setPage(1);
+            setSearch(e.target.value);
+          }}
+          className="flex-1 px-3 py-2 border rounded"
+        />
+
+        <select
+          value={gender}
+          onChange={(e) => {
+            setPage(1);
+            setGender(e.target.value);
+          }}
+          className="px-3 py-2 border rounded"
+        >
+          <option value="">เพศทั้งหมด</option>
+          <option value="male">เพศผู้</option>
+          <option value="female">เพศเมีย</option>
+        </select>
+
+        <select
+          value={category}
+          onChange={(e) => {
+            setPage(1);
+            setCategory(e.target.value);
+          }}
+          className="px-3 py-2 border rounded"
+        >
+          <option value="">หมวดทั้งหมด</option>
+          <option value="sale">ขาย</option>
+          <option value="loan">ยืม</option>
+        </select>
+      </div>
+
+      {/* แถบสรุป */}
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 mb-5 md:mb-8">
         <span className="bg-pink-100 px-3 py-2 rounded-full text-sm md:text-base w-full sm:w-auto text-center sm:text-left">
           🐇 ทั้งหมด {total} ตัว • แสดง {rabbits.length}/{limit} • หน้า {page}/{totalPages}
@@ -100,11 +154,11 @@ export default function ManageRabbits() {
 
       {loading && <p className="text-gray-500 text-center">กำลังโหลด...</p>}
       {err && <p className="text-red-500 text-center">{err}</p>}
-
       {!loading && !err && rabbits.length === 0 && (
         <p className="text-gray-400 italic text-center">ยังไม่มีกระต่ายในระบบ</p>
       )}
 
+      {/* ✅ List Rabbits */}
       <div className="space-y-3 md:space-y-4">
         {rabbits.map((r) => (
           <div key={r.rabbit_id} className="rounded-2xl border bg-white p-3 sm:p-4 shadow-sm">
@@ -118,7 +172,6 @@ export default function ManageRabbits() {
                 }}
                 loading="lazy"
               />
-
               <div className="min-w-0 flex-1">
                 <p className="font-semibold text-sm sm:text-base break-words">
                   ชื่อ {r.name} • สายพันธุ์ {r.breed || "-"} • {genderTH(r.gender)}
@@ -126,14 +179,10 @@ export default function ManageRabbits() {
                 <p className="text-xs sm:text-sm text-gray-700">
                   อายุ {r.age ?? "-"} ปี • ราคา {formatTHB(r.price)} • สถานะ {r.status || "—"}
                 </p>
-                {r.description && (
-                  <p className="text-xs sm:text-sm mt-1 text-gray-700 break-words overflow-hidden text-ellipsis">
-                    {r.description}
-                  </p>
-                )}
+                <p className="text-xs sm:text-sm text-gray-500 mt-1">
+                  หมวด: {r.category === "loan" ? "ยืม" : "ขาย"}
+                </p>
               </div>
-
-              {/* แถบปุ่ม — มือถือเต็มความกว้าง, จอใหญ่ชิดขวา */}
               <div className="flex w-full sm:w-auto gap-2 sm:ml-auto">
                 <Link
                   to={`/edit-rabbit/${r.rabbit_id}`}
@@ -147,41 +196,17 @@ export default function ManageRabbits() {
                 >
                   ลบ
                 </button>
-
-                {String(r.status || "").toLowerCase() === "reserved" && (
-                  <span className="hidden sm:inline-block bg-green-500 text-white px-3 py-2 text-sm rounded shadow">
-                    จองแล้ว
-                  </span>
-                )}
               </div>
-              {String(r.status || "").toLowerCase() === "reserved" && (
-                <span className="sm:hidden mt-2 inline-block bg-green-500 text-white px-3 py-1.5 text-xs rounded shadow w-full text-center">
-                  จองแล้ว
-                </span>
-              )}
             </div>
           </div>
         ))}
       </div>
 
-      {/* Pagination — ห่อบรรทัดได้บนจอเล็ก */}
+      {/* Pagination */}
       {totalPages > 1 && (
         <div className="flex flex-wrap justify-center gap-2 mt-6">
-          <button
-            onClick={() => goToPage(1)}
-            disabled={page === 1}
-            className="h-9 min-w-9 px-3 rounded-full border disabled:opacity-50"
-          >
-            ⟪
-          </button>
-          <button
-            onClick={() => goToPage(page - 1)}
-            disabled={page === 1}
-            className="h-9 min-w-9 px-3 rounded-full border disabled:opacity-50"
-          >
-            «
-          </button>
-
+          <button onClick={() => goToPage(1)} disabled={page === 1} className="h-9 min-w-9 px-3 rounded-full border disabled:opacity-50">⟪</button>
+          <button onClick={() => goToPage(page - 1)} disabled={page === 1} className="h-9 min-w-9 px-3 rounded-full border disabled:opacity-50">«</button>
           {Array.from({ length: totalPages }, (_, i) => i + 1).map((n) => (
             <button
               key={n}
@@ -194,21 +219,8 @@ export default function ManageRabbits() {
               {n}
             </button>
           ))}
-
-          <button
-            onClick={() => goToPage(page + 1)}
-            disabled={page === totalPages}
-            className="h-9 min-w-9 px-3 rounded-full border disabled:opacity-50"
-          >
-            »
-          </button>
-          <button
-            onClick={() => goToPage(totalPages)}
-            disabled={page === totalPages}
-            className="h-9 min-w-9 px-3 rounded-full border disabled:opacity-50"
-          >
-            ⟫
-          </button>
+          <button onClick={() => goToPage(page + 1)} disabled={page === totalPages} className="h-9 min-w-9 px-3 rounded-full border disabled:opacity-50">»</button>
+          <button onClick={() => goToPage(totalPages)} disabled={page === totalPages} className="h-9 min-w-9 px-3 rounded-full border disabled:opacity-50">⟫</button>
         </div>
       )}
     </div>

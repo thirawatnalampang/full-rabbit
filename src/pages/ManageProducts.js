@@ -10,6 +10,27 @@ function formatTHB(n) {
 }
 const FALLBACK_IMG = 'https://placehold.co/200x200?text=Product';
 
+/* ====== Labels (TH) ====== */
+const CATEGORY_LABELS = {
+  'Pet food': 'อาหารกระต่าย',
+  'Equipment': 'อุปกรณ์กระต่าย',
+};
+const PRODUCT_STATUS_LABELS = {
+  available: 'พร้อมขาย',
+  unavailable: 'ไม่พร้อมขาย',
+  discontinued: 'เลิกจำหน่าย',
+  out_of_stock: 'สินค้าหมด',   // ✅ เพิ่มบรรทัดนี้
+};
+
+
+function statusChipClass(status) {
+  const s = String(status || '').toLowerCase();
+  if (s === 'available') return 'bg-emerald-100 text-emerald-700';
+  if (s === 'unavailable') return 'bg-gray-200 text-gray-700';
+  if (s === 'discontinued') return 'bg-rose-100 text-rose-700';
+  return 'bg-gray-200 text-gray-700';
+}
+
 export default function ManageProducts() {
   const [items, setItems] = useState([]);
   const [page, setPage] = useState(1);
@@ -119,10 +140,11 @@ export default function ManageProducts() {
           value={category}
           onChange={(e) => { setCategory(e.target.value); setPage(1); }}
           className="border rounded px-3 py-2 w-full"
+          title="หมวดสินค้า"
         >
           <option value="">ทั้งหมด (ทุกหมวด)</option>
-          <option value="Pet food">Pet food</option>
-          <option value="Equipment">Equipment</option>
+          <option value="Pet food">อาหารกระต่าย</option>
+          <option value="Equipment">อุปกรณ์กระต่าย</option>
         </select>
         <div className="flex gap-3">
           <Link
@@ -164,55 +186,55 @@ export default function ManageProducts() {
               <div className="flex-1">
                 <div className="flex items-start justify-between gap-2">
                   <div className="font-semibold">{p.name}</div>
-                  <span className={`text-xs px-2 py-1 rounded-full ${
-                    String(p.status || '').toLowerCase() === 'available'
-                      ? 'bg-emerald-100 text-emerald-700'
-                      : 'bg-gray-200 text-gray-700'
-                  }`}>
-                    {p.status || '—'}
-                  </span>
+                 <span
+  className={`${statusChipClass(p.status)} 
+              inline-flex items-center justify-center 
+              text-xs font-medium rounded-full 
+              px-2.5 py-1 min-w-[80px] text-center shrink-0`}
+>
+  {PRODUCT_STATUS_LABELS[String(p.status || '').toLowerCase()] || p.status || '—'}
+</span>
                 </div>
 
                 <div className="text-sm text-gray-600">
-                  หมวด: {p.category || '-'} • ราคา: {formatTHB(p.price)} • สต๊อก: {p.stock ?? 0}
+                  หมวด: {CATEGORY_LABELS[p.category] || p.category || '-'} • ราคา: {formatTHB(p.price)} • สต๊อก: {p.stock ?? 0}
                 </div>
                 {p.description && (
                   <div className="text-sm text-gray-700 mt-1 line-clamp-2">
                     {p.description}
                   </div>
                 )}
+<div className="mt-3 flex flex-wrap gap-2 items-center">
+  <Link
+    to={`/edit-product/${p.product_id}`}
+    className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm"
+  >
+    แก้ไข
+  </Link>
+  <button
+    onClick={() => handleDelete(p.product_id)}
+    className="px-3 py-1 rounded bg-red-500 hover:bg-red-600 text-white text-sm"
+  >
+    ลบ
+  </button>
 
-                <div className="mt-3 flex gap-2">
-                  <Link
-                    to={`/edit-product/${p.product_id}`}
-                    className="px-3 py-1 rounded bg-blue-600 hover:bg-blue-700 text-white text-sm"
-                  >
-                    แก้ไข
-                  </Link>
-                  <button
-                    onClick={() => handleDelete(p.product_id)}
-                    className="px-3 py-1 rounded bg-red-500 hover:bg-red-600 text-white text-sm"
-                  >
-                    ลบ
-                  </button>
-
-                  {/* ลิงก์ดูในหน้า public ตามหมวด */}
-                  {String(p.category || '').toLowerCase() === 'equipment' ? (
-                    <Link
-                      to={`/equipment/${p.product_id}`}
-                      className="ml-auto px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm"
-                    >
-                      ดูหน้าอุปกรณ์
-                    </Link>
-                  ) : (
-                    <Link
-                      to={`/pet-food/${p.product_id}`}
-                      className="ml-auto px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm"
-                    >
-                      ดูหน้าอาหาร
-                    </Link>
-                  )}
-                </div>
+  {/* ลิงก์ดูในหน้า public ตามหมวด */}
+  {String(p.category || '').toLowerCase() === 'equipment' ? (
+    <Link
+      to={`/equipment/${p.product_id}`}
+      className="flex-1 px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm text-center"
+    >
+      ดูหน้าสินค้า
+    </Link>
+  ) : (
+    <Link
+      to={`/pet-food/${p.product_id}`}
+      className="flex-1 px-3 py-1 rounded bg-gray-100 hover:bg-gray-200 text-sm text-center"
+    >
+      ดูหน้าสินค้า
+    </Link>
+  )}
+</div>
               </div>
             </div>
           ))}

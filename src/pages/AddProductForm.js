@@ -105,18 +105,18 @@ export default function AddProductForm() {
         value={name}
         onChange={(e) => setName(e.target.value)}
         className="w-full border px-3 py-2 mb-4 rounded"
-        placeholder="เช่น อาหารกระต่าย"
+        placeholder=""
       />
 
       <label className="block mb-2">หมวดหมู่</label>
-      <select
-        value={category}
-        onChange={(e) => setCategory(e.target.value)}
-        className="w-full border px-3 py-2 mb-4 rounded"
-      >
-        <option value="Pet food">Pet food</option>
-        <option value="Equipment">Equipment</option>
-      </select>
+<select
+  value={category}
+  onChange={(e) => setCategory(e.target.value)}
+  className="w-full border px-3 py-2 mb-4 rounded"
+>
+  <option value="Pet food">อาหารกระต่าย</option>
+  <option value="Equipment">อุปกรณ์กระต่าย</option>
+</select>
 
       <label className="block mb-2">ราคา (บาท)</label>
       <input
@@ -138,12 +138,13 @@ export default function AddProductForm() {
         className="w-full border px-3 py-2 mb-4 rounded"
       />
 
-      <label className="block mb-2">รายละเอียดสินค้า</label>
-      <textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        className="w-full border px-3 py-2 mb-4 rounded"
-      />
+            <label className="block mb-2">รายละเอียดสินค้า</label>
+<textarea
+  value={description}
+  onChange={(e) => setDescription(e.target.value)}
+  rows={6} // ← ปรับจำนวนบรรทัด
+  className="w-full border px-3 py-2 mb-4 rounded"
+/>
 
       {/* Submit */}
       <div className="mt-4">

@@ -133,15 +133,15 @@ export default function EditProductForm() {
         placeholder="เช่น อาหารกระต่าย"
       />
 
-      <label className="block mb-2">หมวดหมู่</label>
-      <select
-        value={category}
-        onChange={(e) => setCategory(e.target.value)}
-        className="w-full border px-3 py-2 mb-4 rounded"
-      >
-        <option value="Pet food">Pet food</option>
-        <option value="Equipment">Equipment</option>
-      </select>
+     <label className="block mb-2">หมวดหมู่</label>
+<select
+  value={category}
+  onChange={(e) => setCategory(e.target.value)}
+  className="w-full border px-3 py-2 mb-4 rounded"
+>
+  <option value="Pet food">อาหารกระต่าย</option>
+  <option value="Equipment">อุปกรณ์กระต่าย</option>
+</select>
 
       <label className="block mb-2">ราคา (บาท)</label>
       <input
@@ -160,18 +160,19 @@ export default function EditProductForm() {
       />
 
       <label className="block mb-2">รายละเอียดสินค้า</label>
-      <textarea
-        value={description}
-        onChange={(e) => setDescription(e.target.value)}
-        className="w-full border px-3 py-2 mb-4 rounded"
-      />
+<textarea
+  value={description}
+  onChange={(e) => setDescription(e.target.value)}
+  rows={6} // ← ปรับจำนวนบรรทัด
+  className="w-full border px-3 py-2 mb-4 rounded"
+/>
 
       <div className="mt-4">
         <button
           type="button"
           onClick={handleSubmit}
           disabled={submitting}
-          className="w-full bg-blue-500 hover:bg-blue-600 text-white py-2 rounded disabled:opacity-60"
+           className="w-full bg-green-500 hover:bg-green-600 text-white py-2 rounded disabled:opacity-60"
         >
           {submitting ? "กำลังบันทึก..." : "บันทึกการแก้ไข"}
         </button>
