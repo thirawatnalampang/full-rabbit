@@ -740,39 +740,40 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { username, password } = req.body;
-    console.log(`[LOGIN ATTEMPT] username:${username}, time:${nowISO_log()}`);
+    console.log(`[LOGIN ATTEMPT] username:${username}, time:${nowISO_log?.() || new Date().toISOString()}`);
 
     if (!username || !password) {
-      console.log(`[LOGIN FAIL] username:${username}, reason:missing_fields, time:${nowISO_log()}`);
+      console.log(`[LOGIN FAIL] username:${username}, reason:missing_fields, time:${nowISO_log?.() || new Date().toISOString()}`);
       return res.status(400).json({ message: 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน' });
     }
 
     const userResult = await pool.query('SELECT * FROM users WHERE username = $1', [username]);
     if (userResult.rows.length === 0) {
-      console.log(`[LOGIN FAIL] username:${username}, reason:user_not_found, time:${nowISO_log()}`);
+      console.log(`[LOGIN FAIL] username:${username}, reason:user_not_found, time:${nowISO_log?.() || new Date().toISOString()}`);
       return res.status(401).json({ message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
     }
 
     const user = userResult.rows[0];
 
     if (user.role !== 'admin' && user.email_verified === false) {
-      console.log(`[LOGIN FAIL] username:${username}, user_id:${user.user_id}, reason:email_not_verified, time:${nowISO_log()}`);
+      console.log(`[LOGIN FAIL] username:${username}, user_id:${user.user_id}, reason:email_not_verified, time:${nowISO_log?.() || new Date().toISOString()}`);
       return res.status(403).json({ message: 'กรุณายืนยันอีเมลก่อนเข้าสู่ระบบ' });
     }
 
-    let match = false;
-    if (user.role === 'admin') {
-      match = password === user.password || await bcrypt.compare(password, user.password);
-    } else {
-      match = await bcrypt.compare(password, user.password);
-    }
+    // 🔒 แนะนำ: ใช้ bcrypt เสมอ
+    let match = await bcrypt.compare(password, user.password);
+
+    // ถ้าคุณ “จำเป็นจริงๆ” จะให้ admin ล็อกอินด้วย plaintext (ระยะสั้นช่วงย้ายข้อมูล) คอมเมนต์บรรทัดด้านล่างออก:
+    // if (user.role === 'admin') match = match || (password === user.password);
+
     if (!match) {
-      console.log(`[LOGIN FAIL] username:${username}, user_id:${user.user_id}, reason:password_incorrect, time:${nowISO_log()}`);
+      console.log(`[LOGIN FAIL] username:${username}, user_id:${user.user_id}, reason:password_incorrect, time:${nowISO_log?.() || new Date().toISOString()}`);
       return res.status(401).json({ message: 'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง' });
     }
 
-    console.log(`[LOGIN SUCCESS] ${user.username} (user_id: ${user.user_id}, role: ${user.role}) at ${nowISO_log()}`);
+    console.log(`[LOGIN SUCCESS] ${user.username} (user_id: ${user.user_id}, role: ${user.role}) at ${nowISO_log?.() || new Date().toISOString()}`);
 
+    // ✅ ส่งฟิลด์ที่ฟรอนต์ใช้ให้ครบ
     res.json({
       message: 'ล็อกอินสำเร็จ',
       user: {
@@ -780,36 +781,56 @@ app.post('/api/login', async (req, res) => {
         username: user.username,
         email: user.email,
         phone: user.phone,
-        address: user.address,
+        address: user.address,          // ฟอร์แมต "detail|tambon|amphoe|province|zipcode"
+        gender: user.gender ?? '',      // ➕ สำคัญ: ฟรอนต์อ่านค่าไปตั้ง initial state
         profile_image: user.profile_image,
         role: user.role
       }
     });
   } catch (err) {
     console.error('Login error:', err);
-    console.log(`[LOGIN FAIL] username:${req.body?.username}, reason:server_error, time:${nowISO_log()}`);
+    console.log(`[LOGIN FAIL] username:${req.body?.username}, reason:server_error, time:${nowISO_log?.() || new Date().toISOString()}`);
     res.status(500).json({ message: 'เกิดข้อผิดพลาดในระบบ' });
   }
 });
 app.put('/api/users/:id', async (req, res) => {
-  const { id } = req.params;
+  const idRaw = req.params.id;
+  const id = Number(idRaw);
+  if (!Number.isFinite(id)) {
+    return res.status(400).json({ error: 'Invalid user id' });
+  }
+
   const { username, email, phone, address, gender, profileImage } = req.body;
+
+  // simple phone validation: ว่างได้ หรือเป็นตัวเลข 10 หลัก
+  const cleanPhone = (phone ?? '').trim();
+  if (cleanPhone !== '' && !/^\d{10}$/.test(cleanPhone)) {
+    return res.status(400).json({ error: 'เบอร์โทรต้องเป็นตัวเลข 10 หลัก' });
+  }
 
   try {
     const beforeRes = await pool.query('SELECT * FROM users WHERE user_id = $1', [id]);
     if (beforeRes.rows.length === 0) {
-      console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:not_found, time:${nowISO()}`);
+      console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:not_found, time:${nowISO?.() || new Date().toISOString()}`);
       return res.status(404).json({ error: 'User not found' });
     }
     const before = beforeRes.rows[0];
 
-    // ❌ ห้ามแก้ email: ถ้าส่ง email มาและต่างจากเดิม → ปฏิเสธ
+    // ❌ ห้ามแก้ email
     if (typeof email !== 'undefined' && email !== before.email) {
-      console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:email_change_attempt, time:${nowISO()}`);
+      console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:email_change_attempt, time:${nowISO?.() || new Date().toISOString()}`);
       return res.status(400).json({ error: 'Email cannot be changed' });
     }
 
-    // ✅ อัปเดตเฉพาะฟิลด์ที่อนุญาต (ไม่แตะ email เลย)
+    // address: เก็บเป็นสตริงเดียวตามฟรอนต์ (หรือถ้ายังไม่ส่งมาก็ใช้ของเดิม)
+    const nextAddress = (typeof address !== 'undefined') ? String(address) : before.address;
+    // gender: อนุญาต '', 'male', 'female', 'other'
+    const allowedGender = new Set(['', 'male', 'female', 'other', null]);
+    const nextGender = (typeof gender !== 'undefined') ? gender : before.gender;
+    if (typeof nextGender !== 'undefined' && !allowedGender.has(nextGender)) {
+      return res.status(400).json({ error: 'ค่าเพศไม่ถูกต้อง' });
+    }
+
     const result = await pool.query(
       `UPDATE users 
          SET username = $1,
@@ -820,28 +841,35 @@ app.put('/api/users/:id', async (req, res) => {
        WHERE user_id = $6
        RETURNING *`,
       [
-        (typeof username !== 'undefined') ? username : before.username,
-        (typeof phone !== 'undefined') ? phone : before.phone,
-        (typeof address !== 'undefined') ? address : before.address,
-        (typeof gender !== 'undefined') ? gender : before.gender,
-        (typeof profileImage !== 'undefined') ? profileImage : before.profile_image,
+        (typeof username !== 'undefined') ? String(username) : before.username,
+        (typeof phone !== 'undefined') ? cleanPhone : before.phone,
+        nextAddress,
+        (typeof gender !== 'undefined') ? nextGender : before.gender,
+        (typeof profileImage !== 'undefined') ? String(profileImage) : before.profile_image,
         id
       ]
     );
 
     const after = result.rows[0];
-    const changes = diffUser(before, after);
-    if (changes.length === 0) {
-      console.log(`[PROFILE UPDATE] user_id:${id}, changed:none, time:${nowISO()}`);
+
+    // (ออปชัน) ล็อก diff ถ้ามีฟังก์ชันช่วย
+    if (typeof diffUser === 'function') {
+      const changes = diffUser(before, after) || [];
+      if (changes.length === 0) {
+        console.log(`[PROFILE UPDATE] user_id:${id}, changed:none, time:${nowISO?.() || new Date().toISOString()}`);
+      } else {
+        const parts = changes.map(c => `${c.field}:{${show?.(c.oldVal) ?? c.oldVal} -> ${show?.(c.newVal) ?? c.newVal}}`);
+        console.log(`[PROFILE UPDATE] user_id:${id}, changed:${parts.join(', ')}, time:${nowISO?.() || new Date().toISOString()}`);
+      }
     } else {
-      const parts = changes.map(c => `${c.field}:{${show(c.oldVal)} -> ${show(c.newVal)}}`);
-      console.log(`[PROFILE UPDATE] user_id:${id}, changed:${parts.join(', ')}, time:${nowISO()}`);
+      console.log(`[PROFILE UPDATE] user_id:${id}, time:${nowISO?.() || new Date().toISOString()}`);
     }
 
+    // ✅ ส่งคืน record หลังอัปเดต (ฟรอนต์จะใช้ค่า: profile_image, gender, address)
     res.json(after);
   } catch (err) {
     console.error('❌ Failed to update user:', err);
-    console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:server_error, time:${nowISO()}`);
+    console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:server_error, time:${nowISO?.() || new Date().toISOString()}`);
     res.status(500).json({ error: 'Failed to update user' });
   }
 });
@@ -1106,10 +1134,10 @@ app.get('/api/my-orders', async (req, res) => {
         o.status,
         o.payment_status,
         o.payment_method,
-        /* ✅ ฟิลด์สำหรับเลขพัสดุ */
         o.carrier,
         o.tracking_code,
         o.tracking_updated_at,
+        u.email AS buyer_email,         -- ✅ เพิ่มอีเมลจาก users
         COALESCE(SUM(od.quantity),0)::int AS total_items,
         json_agg(
           json_build_object(
@@ -1125,13 +1153,14 @@ app.get('/api/my-orders', async (req, res) => {
             'price',    od.price
           )
           ORDER BY od.order_detail_id
-        ) FILTER (WHERE od.order_detail_id IS NOT NULL) AS items   -- ✅ กัน null
+        ) FILTER (WHERE od.order_detail_id IS NOT NULL) AS items
       FROM orders o
+      JOIN users u ON u.user_id = o.buyer_id     -- ✅ join เอา email มา
       LEFT JOIN order_details od ON od.order_id = o.order_id
       LEFT JOIN rabbits  r ON od.item_type = 'rabbit' AND r.rabbit_id  = od.item_id
       LEFT JOIN products p ON od.item_type IN ('pet-food','equipment') AND p.product_id = od.item_id
       WHERE o.buyer_id = $1
-      GROUP BY o.order_id
+      GROUP BY o.order_id, u.email   -- ✅ ต้องใส่ใน GROUP BY ด้วย
       ORDER BY o.order_date DESC
     `, [buyerId]);
 
@@ -1150,18 +1179,19 @@ app.get('/api/orders/:id', async (req, res) => {
     if (!Number.isFinite(id)) return res.status(400).json({ message: 'invalid id' });
 
     const head = await pool.query(
-      `SELECT
-         o.order_id, o.order_code, o.buyer_id, o.order_date, o.total_amount, o.currency,
-         o.status, o.payment_status, o.payment_method,
-         o.contact_full_name, o.contact_phone,
-         o.shipping_method, o.shipping_address, o.shipping_fee,
-         o.subtotal, o.discount, o.note,
-         /* ✅ เพิ่มฟิลด์พัสดุ */
-         o.carrier, o.tracking_code, o.tracking_updated_at
-       FROM orders o
-       WHERE o.order_id = $1`,
-      [id]
-    );
+  `SELECT
+     o.order_id, o.order_code, o.buyer_id, o.order_date, o.total_amount, o.currency,
+     o.status, o.payment_status, o.payment_method,
+     o.contact_full_name, o.contact_phone,
+     o.shipping_method, o.shipping_address, o.shipping_fee,
+     o.subtotal, o.discount, o.note,
+     o.carrier, o.tracking_code, o.tracking_updated_at,
+     u.email AS buyer_email   -- ✅ เพิ่มตรงนี้
+   FROM orders o
+   JOIN users u ON u.user_id = o.buyer_id
+   WHERE o.order_id = $1`,
+  [id]
+);
 
     if (!head.rowCount) return res.status(404).json({ message: 'not found' });
 
@@ -1280,12 +1310,13 @@ const canCancel =
     client.release();
   }
 });
-/* ========= Admin: รวมรายการ + ชื่อ/รูป ========= */
+/* ========= Admin: รวมรายการ + ชื่อ/รูป + อีเมลผู้สั่งซื้อ ========= */
 app.get('/api/admin/orders', async (_req, res) => {
   try {
     const q = await pool.query(`
       SELECT
         o.*,
+        u.email AS buyer_email,                            -- ✅ เพิ่มอีเมล
         COALESCE(SUM(od.quantity), 0)::int AS total_items,
         json_agg(
           json_build_object(
@@ -1310,12 +1341,11 @@ app.get('/api/admin/orders', async (_req, res) => {
           ORDER BY od.order_detail_id
         ) FILTER (WHERE od.order_detail_id IS NOT NULL) AS items
       FROM orders o
+      JOIN users u ON u.user_id = o.buyer_id              -- ✅ join users เพื่อดึงอีเมล
       LEFT JOIN order_details od ON o.order_id = od.order_id
-      LEFT JOIN rabbits  r ON od.item_type = 'rabbit'
-                           AND r.rabbit_id  = od.item_id
-      LEFT JOIN products p ON od.item_type IN ('pet-food','equipment')
-                           AND p.product_id = od.item_id
-      GROUP BY o.order_id
+      LEFT JOIN rabbits  r ON od.item_type = 'rabbit' AND r.rabbit_id = od.item_id
+      LEFT JOIN products p ON od.item_type IN ('pet-food','equipment') AND p.product_id = od.item_id
+      GROUP BY o.order_id, u.email                         -- ✅ ต้องใส่ใน GROUP BY
       ORDER BY o.order_date DESC
     `);
     res.json(q.rows);
@@ -2121,29 +2151,48 @@ app.get('/api/admin/breeding-loans', async (req, res) => {
 
     const where = ['1=1'];
     const vals = [];
-    if (status) { vals.push(status); where.push(`LOWER(bl.status) = $${vals.length}`); }
+
+    if (status) {
+      vals.push(status);
+      where.push(`LOWER(bl.status) = $${vals.length}`);
+    }
+
     if (search) {
       vals.push(`%${search.toLowerCase()}%`);
       where.push(`(
         LOWER(bl.borrower_name)  LIKE $${vals.length} OR
         LOWER(bl.borrower_phone) LIKE $${vals.length} OR
-        LOWER(r.name)            LIKE $${vals.length}
+        LOWER(r.name)            LIKE $${vals.length} OR
+        LOWER(u.email)           LIKE $${vals.length}
       )`);
     }
+
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
+    // ✅ JOIN ผู้ใช้: ใช้ borrower_user_id ก่อน แล้ว fallback เทียบเบอร์แบบเอาแต่ตัวเลข
+    const userJoin = `
+      LEFT JOIN users u
+        ON u.user_id = bl.borrower_user_id
+        OR REGEXP_REPLACE(u.phone, '\\D', '', 'g') = REGEXP_REPLACE(bl.borrower_phone, '\\D', '', 'g')
+    `;
+
+    // ---- COUNT
     const totalQ = await pool.query(
       `SELECT COUNT(*)::int AS total
          FROM breeding_loans bl
          JOIN rabbits r ON r.rabbit_id = bl.rabbit_id
+         ${userJoin}
        ${whereSql}`, vals
     );
     const total = totalQ.rows[0]?.total || 0;
 
     vals.push(limit, offset);
+
+    // ---- ROWS
     const rowsQ = await pool.query(
       `SELECT
          bl.loan_id, bl.rabbit_id,
+         bl.borrower_user_id,
          bl.borrower_name, bl.borrower_phone, bl.borrower_address,
          bl.start_date, bl.end_date, bl.status, bl.notes,
          bl.total_price,
@@ -2158,17 +2207,31 @@ app.get('/api/admin/breeding-loans', async (req, res) => {
          bl.return_note,
 
          COALESCE(bl.created_at, bl.start_date, NOW()) AS created_at,
-         r.name AS rabbit_name, r.image_url AS rabbit_image,
-         r.breed AS rabbit_breed, r.gender AS rabbit_gender
+
+         r.name      AS rabbit_name,
+         r.image_url AS rabbit_image,
+         r.breed     AS rabbit_breed,
+         r.gender    AS rabbit_gender,
+
+         /* ✅ อีเมลผู้ยืม */
+         u.email     AS borrower_email
        FROM breeding_loans bl
        JOIN rabbits r ON r.rabbit_id = bl.rabbit_id
+       ${userJoin}
        ${whereSql}
        ORDER BY bl.loan_id DESC
        LIMIT $${vals.length-1} OFFSET $${vals.length}`, vals
     );
 
-    res.json({ page, limit, total, totalPages: Math.max(1, Math.ceil(total/limit)), items: rowsQ.rows });
-  } catch (e) { console.error('GET /api/admin/breeding-loans error:', e); res.status(500).json({ error: 'Server error' }); }
+    res.json({
+      page, limit, total,
+      totalPages: Math.max(1, Math.ceil(total / limit)),
+      items: rowsQ.rows
+    });
+  } catch (e) {
+    console.error('GET /api/admin/breeding-loans error:', e);
+    res.status(500).json({ error: 'Server error' });
+  }
 });
 
 // update fields (form “บันทึก”)

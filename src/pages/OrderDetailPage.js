@@ -58,12 +58,27 @@ function TrackingBadge({ carrier, code, updatedAt }) {
 }
 
 /* ---------- ช่วยฟอร์แมตที่อยู่ ---------- */
+// บรรทัดที่ 46:
+/* ---------- ช่วยฟอร์แมตที่อยู่ ---------- */
 function formatAddress(a) {
   if (!a) return "";
-  if (typeof a === "string") return a;
-  const line1 = [a.address].filter(Boolean).join(" ");
-  const line2 = [a.district, a.province, a.zipcode].filter(Boolean).join(" ");
-  return [line1, line2].filter(Boolean).join("\n");
+  if (typeof a === "string") {
+    const parts = a.split('|').map(p => p.trim());
+    const detail = parts[0] || "";
+    const tambon = parts[1] || "";
+    const amphoe = parts[2] || "";
+    const province = parts[3] || "";
+    const zipcode = parts[4] || "";
+    const line1 = detail;
+    const line2 = [tambon, amphoe, province].filter(Boolean).join(" ");
+    const line3 = zipcode;
+    return [line1, line2, line3].filter(Boolean).join("\n");
+  }
+  // ถ้าเป็น Object
+  const line1 = a.detail || "";
+  const line2 = [a.tambon, a.amphoe, a.province].filter(Boolean).join(" ");
+  const line3 = a.zipcode || "";
+  return [line1, line2, line3].filter(Boolean).join("\n");
 }
 
 export default function OrderDetailPage() {

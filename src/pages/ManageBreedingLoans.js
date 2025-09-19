@@ -16,7 +16,23 @@ const Badge = ({ status }) => {
   const s = S_MAP[status] || { label: status || "-", cls: "bg-gray-100 text-gray-800" };
   return <span className={`px-2 py-1 rounded-full text-xs font-medium ${s.cls}`}>{s.label}</span>;
 };
-
+/* -------- ช่วยฟอร์แมตที่อยู่ (เพิ่มใหม่) -------- */
+const formatAddress = (a) => {
+  if (!a) return "—";
+  // ถ้าข้อมูลที่อยู่เป็น Object
+  if (typeof a === "object") {
+    const parts = [
+      a.detail,
+      a.tambon,
+      a.amphoe,
+      a.province,
+      a.zipcode
+    ].filter(Boolean).join(" ");
+    return parts;
+  }
+  // ถ้าข้อมูลที่อยู่เป็น String
+  return a;
+};
 /* -------- ป้ายสถานะการชำระเงิน (ไทย) -------- */
 const PAY_MAP = {
   pending:   { label: "รอตรวจ",      cls: "bg-gray-100 text-gray-800" },
@@ -292,7 +308,8 @@ export default function ManageBreedingLoans() {
                       <div className="mt-1 space-y-0.5 text-sm">
                         <div>📅 {fmtDT(createdAt)}</div>
                         <div>👤 {it.borrower_name || "-"} {it.borrower_phone ? <>• {it.borrower_phone}</> : null}</div>
-                        <div>📍 {it.borrower_address || "—"}</div>
+                        <div>📧 {it.borrower_email || "—"}</div>
+                         <div>📍 {formatAddress(it.borrower_address)}</div>
                         <div>🗓️ {fmtD(it.start_date) || "—"} {it.end_date ? `→ ${fmtD(it.end_date)}` : ""}</div>
                       </div>
                     </div>

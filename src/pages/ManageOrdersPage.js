@@ -48,21 +48,27 @@ const trackingUrl = (carrier, code) => {
   return `https://www.google.com/search?q=${encodeURIComponent(`${carrier || ""} ${code}`)}`;
 };
 
-// ฟอร์แมตที่อยู่ (รับได้ทั้ง object และ string/JSON string)
+// บรรทัดที่ 46:
+/* ---------- ช่วยฟอร์แมตที่อยู่ ---------- */
 function formatAddress(a) {
   if (!a) return "";
   if (typeof a === "string") {
-    // พยายาม parse ถ้าเป็น JSON string
-    try {
-      const j = JSON.parse(a);
-      return formatAddress(j);
-    } catch {
-      return a; // เป็นสตริงปกติ
-    }
+    const parts = a.split('|').map(p => p.trim());
+    const detail = parts[0] || "";
+    const tambon = parts[1] || "";
+    const amphoe = parts[2] || "";
+    const province = parts[3] || "";
+    const zipcode = parts[4] || "";
+    const line1 = detail;
+    const line2 = [tambon, amphoe, province].filter(Boolean).join(" ");
+    const line3 = zipcode;
+    return [line1, line2, line3].filter(Boolean).join("\n");
   }
-  const line1 = [a.address].filter(Boolean).join(" ");
-  const line2 = [a.district, a.province, a.zipcode].filter(Boolean).join(" ");
-  return [line1, line2].filter(Boolean).join("\n");
+  // ถ้าเป็น Object
+  const line1 = a.detail || "";
+  const line2 = [a.tambon, a.amphoe, a.province].filter(Boolean).join(" ");
+  const line3 = a.zipcode || "";
+  return [line1, line2, line3].filter(Boolean).join("\n");
 }
 
 export default function ManageOrdersPage() {
@@ -132,17 +138,24 @@ export default function ManageOrdersPage() {
                   </div>
 
                   {/* ผู้รับ + วิธีส่ง + ที่อยู่ */}
-                  <div className="text-sm text-gray-700 mt-1">
-                    👤 {o.contact_full_name} • {o.contact_phone}
-                  </div>
-                  <div className="text-sm text-gray-700">
-                    🚚 วิธีส่ง: {SHIPPING_LABELS[o.shipping_method] || o.shipping_method || "-"}
-                  </div>
-                  {o.shipping_method !== "pickup" && o.shipping_address && (
-                    <div className="text-sm text-gray-600 whitespace-pre-line mt-1">
-                      📍 {formatAddress(o.shipping_address)}
-                    </div>
-                  )}
+<div className="text-sm text-gray-700 mt-1">
+  👤 {o.contact_full_name} • {o.contact_phone}
+</div>
+
+{Boolean(o.buyer_email) && (
+  <div className="text-sm text-gray-700">
+    📧 {o.buyer_email}
+  </div>
+)}
+
+<div className="text-sm text-gray-700">
+  🚚 วิธีส่ง: {SHIPPING_LABELS[o.shipping_method] || o.shipping_method || "-"}
+</div>
+{o.shipping_method !== "pickup" && o.shipping_address && (
+  <div className="text-sm text-gray-600 whitespace-pre-line mt-1">
+    📍 {formatAddress(o.shipping_address)}
+  </div>
+)}
 
                   {/* Badges */}
                   <div className="mt-2 text-sm space-y-1">

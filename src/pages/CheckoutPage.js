@@ -6,10 +6,9 @@ import { useCart } from "../context/CartContext";
 
 const formatTHB = (n) =>
   new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" }).format(Number(n || 0));
-
 const FALLBACK_IMG = "https://placehold.co/80x80?text=Img";
 
-/* ---------- helpers ---------- */
+/* ---------- item helpers ---------- */
 function getImage(it) { return it.image || it.image_url || it.img || it.photo || FALLBACK_IMG; }
 function getName(it) { return it.name || it.title || it.product_name || it.rabbit_name || "ไม่มีชื่อ"; }
 function getUnitPrice(it) { return Number(it.price ?? it.unitPrice ?? it.amount ?? 0); }
@@ -22,17 +21,15 @@ function getType(it) {
   if (cat.includes("food")) return "pet-food";
   return "rabbit";
 }
-/* --- helper: ดึงเลขจาก id/string --- */
 const toInt = (v) => {
   if (v == null) return NaN;
   if (typeof v === "number") return v;
   if (typeof v === "string") {
-    const m = v.match(/\d+/);      // ดึงตัวเลขชุดแรกจากสตริง
+    const m = v.match(/\d+/);
     return m ? Number(m[0]) : NaN;
   }
   return NaN;
 };
-
 function toOrderItem(it) {
   const type = getType(it);
   const qty = getQty(it);
@@ -41,32 +38,42 @@ function toOrderItem(it) {
   if (type === "rabbit") {
     const rabbit_id = toInt(it.rabbit_id ?? it.base_id ?? it.id);
     if (!Number.isInteger(rabbit_id) || rabbit_id <= 0) return null;
-    return {
-      type: "rabbit",
-      rabbit_id,
-      id: rabbit_id,
-      base_id: rabbit_id,
-      name: getName(it),
-      image: getImage(it),
-      unit_price,
-      qty,
-    };
+    return { type: "rabbit", rabbit_id, id: rabbit_id, base_id: rabbit_id, name: getName(it), image: getImage(it), unit_price, qty };
   }
-
   const product_id = toInt(it.product_id ?? it.base_id ?? it.id);
   if (!Number.isInteger(product_id) || product_id <= 0) return null;
-  return {
-    type,
-    product_id,
-    id: product_id,
-    base_id: product_id,
-    name: getName(it),
-    image: getImage(it),
-    unit_price,
-    qty,
-  };
+  return { type, product_id, id: product_id, base_id: product_id, name: getName(it), image: getImage(it), unit_price, qty };
 }
 
+/* ---------- address helpers ---------- */
+const parseAddressString = (addrStr = "") => {
+  const p = String(addrStr).split("|").map(s => s.trim());
+  return { detail: p[0]||"", tambon: p[1]||"", amphoe: p[2]||"", province: p[3]||"", zipcode: p[4]||"" };
+};
+const composeAddressString = ({ detail, tambon, amphoe, province, zipcode }) =>
+  [detail||"", tambon||"", amphoe||"", province||"", zipcode||""].join("|");
+
+// --- normalize helpers (กันเคส "จังหวัด/อำเภอ/ตำบล/แขวง/เขต" และเว้นวรรค) ---
+const clean = (s="") => String(s).trim().replace(/\s+/g, " ");
+const norm  = (s="") => clean(s).toLowerCase();
+const normalizeProvince = (p="") => clean(p).replace(/^จังหวัด\s*/,'');
+const normalizeAmphoe   = (a="") => clean(a).replace(/^(อำเภอ|อําเภอ|เขต)\s*/,'');
+const normalizeTambon   = (t="") => clean(t).replace(/^(ตำบล|แขวง)\s*/,'');
+
+/** รวมค่าที่อยู่และชื่อจากโปรไฟล์ (เผื่อ key ต่างกัน) */
+const prefillFromProfile = (profile) => {
+  const p = profile || {};
+  const parsed = parseAddressString(p.address || "");
+  return {
+    // ไม่คืน fullName เพื่อให้ผู้ใช้กรอกเอง
+    phone: p.phone || p.tel || "",
+    detail: parsed.detail || p.detail || "",
+    province: parsed.province || p.province || "",
+    amphoe: parsed.amphoe || p.amphoe || p.district || "",
+    tambon: parsed.tambon || p.tambon || p.subdistrict || "",
+    zipcode: parsed.zipcode || p.zipcode || p.postcode || "",
+  };
+};
 
 /* ---------- config ---------- */
 const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000";
@@ -79,42 +86,148 @@ export default function CheckoutPage() {
   const { cartItems, clearCart } = useCart();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (!user) navigate("/get-started", { state: { from: "/checkout" } });
-  }, [user, navigate]);
+  useEffect(() => { if (!user) navigate("/get-started", { state: { from: "/checkout" } }); }, [user, navigate]);
 
-  // ✅ แสดงผลสำเร็จบนหน้านี้ ไม่ต้องไปหน้าอื่น
+  // ผลลัพธ์สำเร็จ
   const [success, setSuccess] = useState(null); // { orderId, total }
 
+  // ฟอร์มหลัก
   const [form, setForm] = useState({
-    fullName: user?.fullName || user?.username || user?.name || "",
+    fullName: "",        // ไม่ auto-fill ชื่อ
     phone: "",
-    address: "",
-    province: "",
-    district: "",
-    zipcode: "",
+    detail: "",          // บ้านเลขที่/หมู่บ้าน/ถนน
     note: "",
     shippingMethod: "standard",
     paymentMethod: "cod",
   });
 
-  // Prefill โปรไฟล์ (เฉพาะช่องที่ยังว่าง)
+  // dropdown จังหวัด/อำเภอ/ตำบล
+  const [addrData, setAddrData] = useState([]);
+  const [addrReady, setAddrReady] = useState(false);
+  const [provList, setProvList] = useState([]);
+  const [amphoeList, setAmphoeList] = useState([]);
+  const [tambonList, setTambonList] = useState([]);
+  const [province, setProvince] = useState("");
+  const [amphoe, setAmphoe] = useState("");
+  const [tambon, setTambon] = useState("");
+  const [zipcode, setZipcode] = useState("");
+
+  // โหลดไฟล์ตำแหน่งที่อยู่ (จาก public/thai-address.json)
+  useEffect(() => {
+    (async () => {
+      try {
+        const r = await fetch("/thai-address.json");
+        const j = await r.json();
+        setAddrData(j || []);
+        setProvList((j || []).map(p => p.province));
+      } catch(e) {
+        console.error("โหลด thai-address.json ไม่สำเร็จ", e);
+      } finally {
+        setAddrReady(true);
+      }
+    })();
+  }, []);
+
+  // Prefill จากโปรไฟล์ — ไม่ดึงชื่อ, แต่ดึงเบอร์/ที่อยู่ + normalize
   useEffect(() => {
     if (!user) return;
-    const p = user.profile || user;
-    setForm((s) => ({
+    const u = user.profile || user;
+    const pf = prefillFromProfile(u);
+
+    setForm(s => ({
       ...s,
-      fullName: s.fullName || p.fullName || p.name || p.username || "",
-      phone: s.phone || p.phone || p.tel || "",
-      address: s.address || p.address || p.addr || "",
-      province: s.province || p.province || "",
-      district: s.district || p.district || p.amphoe || "",
-      zipcode: s.zipcode || p.zipcode || p.postcode || "",
+      fullName: s.fullName || "",               // คงว่างไว้ให้ผู้ใช้กรอก
+      phone: s.phone || pf.phone,
+      detail: s.detail || pf.detail,
     }));
+
+    // เก็บ dropdown จากโปรไฟล์ (normalize)
+    setProvince(normalizeProvince(pf.province || ""));
+    setAmphoe(normalizeAmphoe(pf.amphoe || ""));
+    setTambon(normalizeTambon(pf.tambon || ""));
+    setZipcode(pf.zipcode || "");
   }, [user]);
 
+  // เมื่อ addrData พร้อม หรือเมื่อ province/amphoe/tambon อัปเดต → apply รายการให้ถูกต้อง
+  useEffect(() => {
+    if (!addrReady) return;
+
+    // province -> fill amphoe list (เทียบแบบ normalize)
+    const p = addrData.find(x => norm(x.province) === norm(province));
+    const newAmphoes = p ? p.amphoes.map(a => a.amphoe) : [];
+    setAmphoeList(newAmphoes);
+
+    // ถ้า amphoe ปัจจุบันยังอยู่ในจังหวัดนี้ คงไว้ ไม่งั้นล้าง
+    setAmphoe(prev =>
+      p && p.amphoes.some(a => norm(a.amphoe) === norm(prev)) ? prev : ""
+    );
+
+    // ตามด้วย tambon list ของ amphoe ล่าสุด
+    const aName = p && p.amphoes.some(a => norm(a.amphoe) === norm(amphoe)) ? amphoe : "";
+    const a = p?.amphoes.find(y => norm(y.amphoe) === norm(aName));
+    const newTambons = a ? a.tambons.map(t => t.tambon) : [];
+    setTambonList(newTambons);
+
+    // ถ้า tambon ปัจจุบันยังอยู่ในอำเภอนี้ คงไว้ ไม่งั้นล้าง
+    setTambon(prev =>
+      a && a.tambons.some(t => norm(t.tambon) === norm(prev)) ? prev : ""
+    );
+
+    // ตั้ง zipcode ตามตำบลล่าสุด (ถ้าตรง)
+    const t = a?.tambons.find(z => norm(z.tambon) === (a && a.tambons.some(tt => norm(tt.tambon) === norm(tambon)) ? norm(tambon) : "__none__"));
+    setZipcode(t?.zipcode || "");
+  }, [addrReady, addrData, province, amphoe, tambon]);
+
+ // effect เปลี่ยนจังหวัด
+useEffect(() => {
+  if (!addrReady) return;
+  const p = addrData.find(x => norm(x.province) === norm(province));
+  setAmphoeList(p ? p.amphoes.map(a => a.amphoe) : []);
+  setAmphoe(prev => (p && p.amphoes.some(a => norm(a.amphoe) === norm(prev)) ? prev : ""));
+
+  const a = p?.amphoes.find(y => norm(y.amphoe) === norm(amphoe));
+  setTambonList(a ? a.tambons.map(t => t.tambon) : []);
+
+  const keepTambon = a && a.tambons.some(t => norm(t.tambon) === norm(tambon));
+  if (!keepTambon) {
+    setTambon("");
+    setZipcode("");
+  } else {
+    const t = a.tambons.find(z => norm(z.tambon) === norm(tambon));
+    setZipcode(t?.zipcode || "");
+  }
+}, [province, amphoe, tambon, addrReady, addrData]);
+
+// effect เปลี่ยนอำเภอ
+useEffect(() => {
+  if (!addrReady) return;
+  const p = addrData.find(x => norm(x.province) === norm(province));
+  const a = p?.amphoes.find(y => norm(y.amphoe) === norm(amphoe));
+  setTambonList(a ? a.tambons.map(t => t.tambon) : []);
+
+  const keepTambon = a && a.tambons.some(t => norm(t.tambon) === norm(tambon));
+  if (!keepTambon) {
+    setTambon("");
+    setZipcode("");
+  } else {
+    const t = a.tambons.find(z => norm(z.tambon) === norm(tambon));
+    setZipcode(t?.zipcode || "");
+  }
+}, [amphoe, tambon, addrReady, addrData, province]);
+
+// effect ตั้ง zipcode เมื่อเลือกตำบล
+useEffect(() => {
+  if (!addrReady) return;
+  const p = addrData.find(x => norm(x.province) === norm(province));
+  const a = p?.amphoes.find(y => norm(y.amphoe) === norm(amphoe));
+  const t = a?.tambons.find(z => norm(z.tambon) === norm(tambon));
+  setZipcode(t?.zipcode || "");
+}, [tambon, province, amphoe, addrReady, addrData]);
+  // slip upload
   const [slipFile, setSlipFile] = useState(null);
   const [slipPreview, setSlipPreview] = useState("");
+  const onPickSlip = (e) => { const f = e.target.files?.[0]; if (!f) return; setSlipFile(f); setSlipPreview(URL.createObjectURL(f)); };
+  const removeSlip = () => { setSlipFile(null); setSlipPreview(""); };
 
   const [placing, setPlacing] = useState(false);
   const [error, setError] = useState("");
@@ -130,23 +243,14 @@ export default function CheckoutPage() {
 
   const canPlace = useMemo(() => {
     if (items.length === 0) return false;
-    const baseOk =
-      form.fullName &&
-      form.phone &&
-      (form.shippingMethod === "pickup" ? true : form.address && form.province && form.district && form.zipcode);
+    const needShip = form.shippingMethod !== "pickup";
+    const baseOk = form.fullName && form.phone && (!needShip || (form.detail && province && amphoe && tambon && zipcode));
     if (!baseOk) return false;
     if (form.paymentMethod === "bank_transfer" && !slipFile) return false;
     return true;
-  }, [items.length, form, slipFile]);
+  }, [items.length, form, province, amphoe, tambon, zipcode, slipFile]);
 
   const handleChange = (e) => setForm((s) => ({ ...s, [e.target.name]: e.target.value }));
-  const onPickSlip = (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    setSlipFile(f);
-    setSlipPreview(URL.createObjectURL(f));
-  };
-  const removeSlip = () => { setSlipFile(null); setSlipPreview(""); };
 
   async function placeOrder() {
     setError("");
@@ -156,19 +260,21 @@ export default function CheckoutPage() {
     }
     setPlacing(true);
     try {
+      const addressString = composeAddressString({ detail: form.detail, tambon, amphoe, province, zipcode });
+
       const payload = {
         user_id: user?.id ?? user?.user_id ?? null,
         contact: { full_name: form.fullName, phone: form.phone },
         shipping: {
           method: form.shippingMethod,
           address: form.shippingMethod === "pickup" ? null : {
-            address: form.address, province: form.province, district: form.district, zipcode: form.zipcode,
+            detail: form.detail, province, amphoe, tambon, zipcode,
+            address_string: addressString
           },
           fee: shippingFee,
         },
         payment: { method: form.paymentMethod, status: form.paymentMethod === "cod" ? "unpaid" : "unpaid" },
         note: form.note || null,
-        // ✅ สำคัญ: ใช้ mapper ใหม่เพื่อให้ rabbit ส่ง rabbit_id แน่ ๆ
         items: items.map(toOrderItem),
         summary: { subtotal, shipping: shippingFee, total, currency: "THB" },
       };
@@ -200,9 +306,7 @@ export default function CheckoutPage() {
     } catch (err) {
       console.error("placeOrder error:", err);
       setError("มีข้อผิดพลาดในการบันทึกคำสั่งซื้อ ลองใหม่อีกครั้ง");
-    } finally {
-      setPlacing(false);
-    }
+    } finally { setPlacing(false); }
   }
 
   return (
@@ -232,9 +336,7 @@ export default function CheckoutPage() {
       {success ? null : items.length === 0 ? (
         <div className="bg-white rounded-2xl shadow-sm border p-10 text-center">
           <p className="text-lg text-neutral-600">ตะกร้าของคุณว่างเปล่า</p>
-          <Link to="/" className="mt-4 inline-block px-4 py-2 rounded-full border hover:bg-neutral-50">
-            เลือกสินค้าต่อ
-          </Link>
+          <Link to="/" className="mt-4 inline-block px-4 py-2 rounded-full border hover:bg-neutral-50">เลือกสินค้าต่อ</Link>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -254,12 +356,13 @@ export default function CheckoutPage() {
                     checked={form.shippingMethod === "express"} onChange={handleChange}/>
                   ส่งด่วน (1-2 วัน) {subtotal >= SHIPPING_THRESHOLD ? "– ฟรี" : `– ${formatTHB(SHIPPING_EXPRESS)}`}
                 </label>
-                <label className={`px-3 py-2 rounded- xl border cursor-pointer ${form.shippingMethod === "pickup" ? "bg-neutral-900 text-white" : "hover:bg-neutral-50"}`}>
+                <label className={`px-3 py-2 rounded-xl border cursor-pointer ${form.shippingMethod === "pickup" ? "bg-neutral-900 text-white" : "hover:bg-neutral-50"}`}>
                   <input type="radio" className="mr-2" name="shippingMethod" value="pickup"
                     checked={form.shippingMethod === "pickup"} onChange={handleChange}/>
                   มารับเองที่ร้าน – ฟรี
                 </label>
               </div>
+
               <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm text-neutral-600 mb-1">ชื่อ-นามสกุล</label>
@@ -276,24 +379,41 @@ export default function CheckoutPage() {
               {form.shippingMethod !== "pickup" && (
                 <div className="mt-4 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
-                    <label className="block text-sm text-neutral-600 mb-1">ที่อยู่</label>
-                    <textarea name="address" className="w-full border rounded- xl px-3 py-2" rows={2}
-                      value={form.address} onChange={handleChange} placeholder="บ้านเลขที่ / หมู่บ้าน / ถนน"/>
+                    <label className="block text-sm text-neutral-600 mb-1">รายละเอียดที่อยู่</label>
+                    <textarea name="detail" className="w-full border rounded-xl px-3 py-2" rows={2}
+                      value={form.detail} onChange={handleChange} placeholder="บ้านเลขที่ / หมู่บ้าน / ถนน"/>
                   </div>
+
                   <div>
                     <label className="block text-sm text-neutral-600 mb-1">จังหวัด</label>
-                    <input name="province" className="w-full border rounded-xl px-3 py-2"
-                      value={form.province} onChange={handleChange}/>
+                    <select className="w-full border rounded-xl px-3 py-2"
+                      value={province} onChange={(e)=>setProvince(e.target.value)}>
+                      <option value="">{addrReady ? "เลือกจังหวัด" : "กำลังโหลด..."}</option>
+                      {provList.map(p => <option key={p} value={p}>{p}</option>)}
+                    </select>
                   </div>
+
                   <div>
                     <label className="block text-sm text-neutral-600 mb-1">อำเภอ/เขต</label>
-                    <input name="district" className="w-full border rounded-xl px-3 py-2"
-                      value={form.district} onChange={handleChange}/>
+                    <select className="w-full border rounded-xl px-3 py-2" disabled={!province}
+                      value={amphoe} onChange={(e)=>setAmphoe(e.target.value)}>
+                      <option value="">{province ? "เลือกอำเภอ/เขต" : "เลือกจังหวัดก่อน"}</option>
+                      {amphoeList.map(a => <option key={a} value={a}>{a}</option>)}
+                    </select>
                   </div>
+
+                  <div>
+                    <label className="block text-sm text-neutral-600 mb-1">ตำบล/แขวง</label>
+                    <select className="w-full border rounded-xl px-3 py-2" disabled={!amphoe}
+                      value={tambon} onChange={(e)=>setTambon(e.target.value)}>
+                      <option value="">{amphoe ? "เลือกตำบล/แขวง" : "เลือกอำเภอก่อน"}</option>
+                      {tambonList.map(t => <option key={t} value={t}>{t}</option>)}
+                    </select>
+                  </div>
+
                   <div>
                     <label className="block text-sm text-neutral-600 mb-1">รหัสไปรษณีย์</label>
-                    <input name="zipcode" className="w-full border rounded-xl px-3 py-2"
-                      value={form.zipcode} onChange={handleChange}/>
+                    <input className="w-full border rounded-xl px-3 py-2 bg-neutral-100" readOnly value={zipcode} placeholder="จะเติมอัตโนมัติเมื่อเลือกตำบล"/>
                   </div>
                 </div>
               )}
@@ -321,9 +441,8 @@ export default function CheckoutPage() {
                 </label>
               </div>
 
-{form.paymentMethod === "bank_transfer" && (
+              {form.paymentMethod === "bank_transfer" && (
                 <div className="mt-4 space-y-4">
-                  {/* ✅ QR Code สำหรับโอน */}
                   <div className="text-center">
                     <p className="text-sm text-neutral-600 mb-2">สแกน QR เพื่อชำระเงิน</p>
                     <img
@@ -337,7 +456,6 @@ export default function CheckoutPage() {
                     </p>
                   </div>
 
-                  {/* อัปโหลดสลิป */}
                   <div>
                     <label className="block text-sm text-neutral-600 mb-2">แนบสลิปการโอน (จำเป็น)</label>
 

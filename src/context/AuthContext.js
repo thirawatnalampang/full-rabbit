@@ -53,12 +53,17 @@ export function AuthProvider({ children }) {
       role: 'user',
     });
   };
+ // ✅ เพิ่มฟังก์ชัน updateUser ตรงนี้
+    const updateUser = (updatedUserData) => {
+        setUser(updatedUserData);
+    };
 
-  return (
-    <AuthContext.Provider value={{ user, login, logout, loginWithGoogle }}>
-      {children}
-    </AuthContext.Provider>
-  );
+    // ✅ เพิ่ม updateUser เข้าไปใน value ของ Provider
+    return (
+        <AuthContext.Provider value={{ user, login, logout, loginWithGoogle, updateUser }}>
+            {children}
+        </AuthContext.Provider>
+    );
 }
 
 export function useAuth() {

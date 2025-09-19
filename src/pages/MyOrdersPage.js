@@ -320,8 +320,9 @@ export default function MyOrdersPage() {
                     </div>
 
                     <div className="text-xs text-neutral-500 mt-0.5">
-                      {new Date(o.order_date).toLocaleString("th-TH")} • {o.total_items} ชิ้น
-                    </div>
+  {new Date(o.order_date).toLocaleString("th-TH")} • {o.total_items} ชิ้น
+</div>
+
 
                     <div className="mt-3">
                       <OrderStepper status={o.status} />

@@ -463,8 +463,9 @@ function EmptyState() {
   );
 }
 
-/* ===== Return Modal (คง logic เดิม เพิ่มความเนียนของ UI) ===== */
+/* ===== Return Modal (คง logic เดิม เพิ่มเติม: เติมที่อยู่จากโปรไฟล์ + ตรวจข้อมูลตามวิธีคืน) ===== */
 function ReturnModal({ loanId, onClose }) {
+  const { user } = useAuth(); // <<< ใช้เติมที่อยู่เริ่มต้น
   const [method, setMethod] = useState("ship");
   const [fromText, setFromText] = useState("");
   const [carrier, setCarrier] = useState("");
@@ -474,14 +475,41 @@ function ReturnModal({ loanId, onClose }) {
   const [posting, setPosting] = useState(false);
   const [err, setErr] = useState("");
 
+  // แปลง address-string ของโปรไฟล์เป็นข้อความอ่านง่าย
+  const prettyAddress = (s = "") => {
+    const [detail = "", tambon = "", amphoe = "", province = "", zipcode = ""] =
+      String(s).split("|").map((x) => x.trim());
+    return [detail, tambon && `ต.${tambon}`, amphoe && `อ.${amphoe}`, province && `จ.${province}`, zipcode]
+      .filter(Boolean)
+      .join(", ");
+  };
+
+  // เติมค่าเริ่มต้น "คืนจากที่อยู่" จากโปรไฟล์ (ถ้ายังไม่ได้กรอกเอง)
+  useEffect(() => {
+    if (fromText) return;
+    const p = (user && (user.profile || user)) || {};
+    const addr = p.address ? prettyAddress(p.address) : "";
+    if (addr) setFromText(addr);
+  }, [user, fromText]);
+
   const submit = async () => {
     try {
       setPosting(true);
       setErr("");
+
       if (method === "ship" && (!carrier || !track)) {
         setErr("กรุณากรอก “ขนส่ง” และ “เลขพัสดุ”");
         return;
       }
+      if (method === "dropoff" && !fromText.trim()) {
+        setErr("กรุณากรอกสาขา/ที่อยู่ที่ทำการคืน");
+        return;
+      }
+      if (method === "pickup" && (!pickupTime || !fromText.trim())) {
+        setErr("กรุณากรอก “เวลานัดรับ” และ “จุดนัด/ที่อยู่”");
+        return;
+      }
+
       const body = {
         return_method: method,
         return_from_text: fromText || null,
@@ -490,6 +518,7 @@ function ReturnModal({ loanId, onClose }) {
         pickup_time: method === "pickup" ? pickupTime || null : null,
         return_note: note || null,
       };
+
       const r = await fetch(`${API_BASE}/api/breeding-loans/${loanId}/return-request`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -542,6 +571,7 @@ function ReturnModal({ loanId, onClose }) {
                   className="border rounded px-3 py-2 w-full"
                   value={carrier}
                   onChange={(e) => setCarrier(e.target.value)}
+                  placeholder="เช่น Kerry, Flash, ไปรษณีย์ไทย"
                 />
               </Field>
               <Field label="เลขพัสดุ">
@@ -549,6 +579,7 @@ function ReturnModal({ loanId, onClose }) {
                   className="border rounded px-3 py-2 w-full"
                   value={track}
                   onChange={(e) => setTrack(e.target.value)}
+                  placeholder="เช่น TH0123XXXXXXXX"
                 />
               </Field>
             </div>
@@ -557,6 +588,7 @@ function ReturnModal({ loanId, onClose }) {
                 className="border rounded px-3 py-2 w-full"
                 value={fromText}
                 onChange={(e) => setFromText(e.target.value)}
+                placeholder="เช่น บ้านเลขที่/หมู่บ้าน, ต./อ./จ., รหัสไปรษณีย์"
               />
             </Field>
           </>
@@ -568,6 +600,7 @@ function ReturnModal({ loanId, onClose }) {
               className="border rounded px-3 py-2 w-full"
               value={fromText}
               onChange={(e) => setFromText(e.target.value)}
+              placeholder="เช่น สาขาเชียงใหม่ เซ็นทรัลเฟสฯ หรือที่อยู่ของคุณ"
             />
           </Field>
         )}
@@ -587,6 +620,7 @@ function ReturnModal({ loanId, onClose }) {
                 className="border rounded px-3 py-2 w-full"
                 value={fromText}
                 onChange={(e) => setFromText(e.target.value)}
+                placeholder="เช่น หน้าร้าน/ป้อมยามหมู่บ้าน/ปั๊มน้ำมัน"
               />
             </Field>
           </div>
@@ -598,6 +632,7 @@ function ReturnModal({ loanId, onClose }) {
             rows={3}
             value={note}
             onChange={(e) => setNote(e.target.value)}
+            placeholder="รายละเอียดเพิ่มเติม (ถ้ามี)"
           />
         </Field>
 
