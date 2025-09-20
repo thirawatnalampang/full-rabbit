@@ -708,33 +708,51 @@ app.post('/api/register', async (req, res) => {
       return res.status(400).json({ message: 'กรุณากรอก username, password, email และ otp ให้ครบ' });
     }
 
+    // ตรวจ OTP
     const record = otpStore[email];
     if (!record) return res.status(400).json({ message: 'ยังไม่ได้ส่ง OTP หรือ OTP หมดอายุ' });
     if (now() > record.expireAt) { cleanupOtp(email); return res.status(400).json({ message: 'OTP หมดอายุ กรุณาขอรหัสใหม่' }); }
     if (String(otp) !== String(record.code)) return res.status(400).json({ message: 'OTP ไม่ถูกต้อง' });
 
+    // ซ้ำ username/email?
     const existing = await pool.query('SELECT 1 FROM users WHERE username=$1 OR email=$2', [username, email]);
     if (existing.rows.length > 0) return res.status(400).json({ message: 'ชื่อผู้ใช้หรืออีเมลนี้ถูกใช้แล้ว' });
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const result = await pool.query(
-      `INSERT INTO users (
-      username, password, email,
-      phone, address, gender, role, profile_image, email_verified,
-      province, district, subdistrict, zipcode    -- 👈 เพิ่ม
-    )
-    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
-    RETURNING user_id`,
+    // 👇 ระบุ 13 คอลัมน์ และส่ง 13 ค่าให้ตรงกัน
+    const sql = `
+      INSERT INTO users (
+        username, password, email,
+        phone, address, gender, role, profile_image, email_verified,
+        province, district, subdistrict, zipcode
+      )
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+      RETURNING user_id
+    `;
 
-      [username, hashedPassword, email, null, null, null, 'user', null, true]
-    );
+    const params = [
+      username,               // $1
+      hashedPassword,         // $2
+      email,                  // $3
+      null,                   // $4  phone
+      null,                   // $5  address (detail)
+      null,                   // $6  gender
+      'user',                 // $7  role
+      null,                   // $8  profile_image
+      true,                   // $9  email_verified (ผ่าน OTP แล้ว)
+      null,                   // $10 province
+      null,                   // $11 district
+      null,                   // $12 subdistrict
+      null,                   // $13 zipcode
+    ];
+
+    const result = await pool.query(sql, params);
 
     cleanupOtp(email);
 
     const newUserId = result.rows[0].user_id;
     console.log(`[REGISTER SUCCESS] New user registered: ${username} (user_id: ${newUserId}) at ${nowISO_log()}`);
-
     res.status(201).json({ message: 'สมัครสมาชิกสำเร็จ' });
   } catch (err) {
     console.error('Register error:', err);
