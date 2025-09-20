@@ -38,7 +38,7 @@ function diffUser(oldRow, newRow) {
 const num = (v) => Number(v || 0);
 
 /* ===================== Static / Upload Dirs ===================== */
-const UPLOAD_ROOT = path.join(__dirname, 'uploads');
+const UPLOAD_ROOT = "C:/Users/ADMIN/Desktop/อัพโหลดขายสัตว์/uploads"; 
 const PROFILE_DIR = path.join(UPLOAD_ROOT, 'profile');
 if (!fs.existsSync(UPLOAD_ROOT)) fs.mkdirSync(UPLOAD_ROOT, { recursive: true });
 if (!fs.existsSync(PROFILE_DIR)) fs.mkdirSync(PROFILE_DIR);
@@ -719,9 +719,14 @@ app.post('/api/register', async (req, res) => {
     const hashedPassword = await bcrypt.hash(password, 10);
 
     const result = await pool.query(
-      `INSERT INTO users (username, password, email, phone, address, gender, role, profile_image, email_verified)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)
-       RETURNING user_id`,
+      `INSERT INTO users (
+      username, password, email,
+      phone, address, gender, role, profile_image, email_verified,
+      province, district, subdistrict, zipcode    -- 👈 เพิ่ม
+    )
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
+    RETURNING user_id`,
+
       [username, hashedPassword, email, null, null, null, 'user', null, true]
     );
 
@@ -773,20 +778,23 @@ app.post('/api/login', async (req, res) => {
 
     console.log(`[LOGIN SUCCESS] ${user.username} (user_id: ${user.user_id}, role: ${user.role}) at ${nowISO_log?.() || new Date().toISOString()}`);
 
-    // ✅ ส่งฟิลด์ที่ฟรอนต์ใช้ให้ครบ
     res.json({
-      message: 'ล็อกอินสำเร็จ',
-      user: {
-        user_id: user.user_id,
-        username: user.username,
-        email: user.email,
-        phone: user.phone,
-        address: user.address,          // ฟอร์แมต "detail|tambon|amphoe|province|zipcode"
-        gender: user.gender ?? '',      // ➕ สำคัญ: ฟรอนต์อ่านค่าไปตั้ง initial state
-        profile_image: user.profile_image,
-        role: user.role
-      }
-    });
+  message: 'ล็อกอินสำเร็จ',
+  user: {
+    user_id: user.user_id,
+    username: user.username,
+    email: user.email,
+    phone: user.phone,
+    address: user.address,          // รายละเอียดบ้าน/ถนน
+    province: user.province ?? '',  // 👈 เพิ่ม
+    district: user.district ?? '',
+    subdistrict: user.subdistrict ?? '',
+    zipcode: user.zipcode ?? '',
+    gender: user.gender ?? '',
+    profile_image: user.profile_image,
+    role: user.role
+  }
+});
   } catch (err) {
     console.error('Login error:', err);
     console.log(`[LOGIN FAIL] username:${req.body?.username}, reason:server_error, time:${nowISO_log?.() || new Date().toISOString()}`);
@@ -794,86 +802,48 @@ app.post('/api/login', async (req, res) => {
   }
 });
 app.put('/api/users/:id', async (req, res) => {
-  const idRaw = req.params.id;
-  const id = Number(idRaw);
-  if (!Number.isFinite(id)) {
-    return res.status(400).json({ error: 'Invalid user id' });
-  }
+  const id = Number(req.params.id);
+  const {
+    username, phone, gender, profileImage,
+    address,          // ฟรอนต์จะส่งมาเป็น detail ล้วน (ไม่มี |)
+    province, district, subdistrict, zipcode
+  } = req.body || {};
 
-  const { username, email, phone, address, gender, profileImage } = req.body;
+  // กันกรณีฟรอนต์ยังส่งแบบเดิม (มี | ) มา ให้ตัดเหลือชิ้นแรก
+  const addressDetailOnly = address
+    ? String(address).split('|')[0].trim()
+    : null;
 
-  // simple phone validation: ว่างได้ หรือเป็นตัวเลข 10 หลัก
-  const cleanPhone = (phone ?? '').trim();
-  if (cleanPhone !== '' && !/^\d{10}$/.test(cleanPhone)) {
-    return res.status(400).json({ error: 'เบอร์โทรต้องเป็นตัวเลข 10 หลัก' });
-  }
-
-  try {
-    const beforeRes = await pool.query('SELECT * FROM users WHERE user_id = $1', [id]);
-    if (beforeRes.rows.length === 0) {
-      console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:not_found, time:${nowISO?.() || new Date().toISOString()}`);
-      return res.status(404).json({ error: 'User not found' });
-    }
-    const before = beforeRes.rows[0];
-
-    // ❌ ห้ามแก้ email
-    if (typeof email !== 'undefined' && email !== before.email) {
-      console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:email_change_attempt, time:${nowISO?.() || new Date().toISOString()}`);
-      return res.status(400).json({ error: 'Email cannot be changed' });
-    }
-
-    // address: เก็บเป็นสตริงเดียวตามฟรอนต์ (หรือถ้ายังไม่ส่งมาก็ใช้ของเดิม)
-    const nextAddress = (typeof address !== 'undefined') ? String(address) : before.address;
-    // gender: อนุญาต '', 'male', 'female', 'other'
-    const allowedGender = new Set(['', 'male', 'female', 'other', null]);
-    const nextGender = (typeof gender !== 'undefined') ? gender : before.gender;
-    if (typeof nextGender !== 'undefined' && !allowedGender.has(nextGender)) {
-      return res.status(400).json({ error: 'ค่าเพศไม่ถูกต้อง' });
-    }
-
-    const result = await pool.query(
-      `UPDATE users 
-         SET username = $1,
-             phone = $2,
-             address = $3,
-             gender = $4,
-             profile_image = $5
-       WHERE user_id = $6
-       RETURNING *`,
-      [
-        (typeof username !== 'undefined') ? String(username) : before.username,
-        (typeof phone !== 'undefined') ? cleanPhone : before.phone,
-        nextAddress,
-        (typeof gender !== 'undefined') ? nextGender : before.gender,
-        (typeof profileImage !== 'undefined') ? String(profileImage) : before.profile_image,
-        id
-      ]
-    );
-
-    const after = result.rows[0];
-
-    // (ออปชัน) ล็อก diff ถ้ามีฟังก์ชันช่วย
-    if (typeof diffUser === 'function') {
-      const changes = diffUser(before, after) || [];
-      if (changes.length === 0) {
-        console.log(`[PROFILE UPDATE] user_id:${id}, changed:none, time:${nowISO?.() || new Date().toISOString()}`);
-      } else {
-        const parts = changes.map(c => `${c.field}:{${show?.(c.oldVal) ?? c.oldVal} -> ${show?.(c.newVal) ?? c.newVal}}`);
-        console.log(`[PROFILE UPDATE] user_id:${id}, changed:${parts.join(', ')}, time:${nowISO?.() || new Date().toISOString()}`);
-      }
-    } else {
-      console.log(`[PROFILE UPDATE] user_id:${id}, time:${nowISO?.() || new Date().toISOString()}`);
-    }
-
-    // ✅ ส่งคืน record หลังอัปเดต (ฟรอนต์จะใช้ค่า: profile_image, gender, address)
-    res.json(after);
-  } catch (err) {
-    console.error('❌ Failed to update user:', err);
-    console.log(`[PROFILE UPDATE FAIL] user_id:${id}, reason:server_error, time:${nowISO?.() || new Date().toISOString()}`);
-    res.status(500).json({ error: 'Failed to update user' });
-  }
+  const q = `
+    UPDATE users SET
+      username      = COALESCE($1, username),
+      phone         = COALESCE($2, phone),
+      gender        = COALESCE($3, gender),
+      profile_image = COALESCE($4, profile_image),
+      address       = COALESCE($5, address),       -- detail เท่านั้น
+      province      = COALESCE($6, province),
+      district      = COALESCE($7, district),
+      subdistrict   = COALESCE($8, subdistrict),
+      zipcode       = COALESCE($9, zipcode)
+    WHERE user_id = $10
+    RETURNING user_id, username, email, phone, gender, profile_image,
+              address, province, district, subdistrict, zipcode
+  `;
+  const params = [
+    username ?? null,
+    phone ?? null,
+    gender ?? null,
+    profileImage ?? null,
+    addressDetailOnly,      // << เก็บเฉพาะ detail
+    province ?? null,
+    district ?? null,
+    subdistrict ?? null,
+    zipcode ?? null,
+    id
+  ];
+  const { rows } = await pool.query(q, params);
+  res.json(rows[0]);
 });
-
 app.post('/api/users/:id/profile-image', async (req, res) => {
   const { id } = req.params;
   const { profileImage } = req.body;
@@ -961,6 +931,22 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
     if (!payment?.method) return res.status(400).json({ message: 'ระบุ payment.method' });
     if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ message: 'ไม่มีสินค้า' });
 
+    // ---- address ที่แยกคอลัมน์แล้ว ----
+    const addr = shipping?.address || {};
+    const ship_detail      = (addr.detail || '').trim();
+    const ship_subdistrict = addr.subdistrict || addr.tambon || '';
+    const ship_district    = addr.district || addr.amphoe || '';
+    const ship_province    = addr.province || '';
+    const ship_zipcode     = addr.zipcode || '';
+
+    // (ถ้าต้องการ validate เพิ่มเติม)
+    if (!ship_province || !ship_district || !ship_subdistrict || !ship_zipcode) {
+      return res.status(400).json({ message: 'กรอกจังหวัด/อำเภอ/ตำบล/รหัสไปรษณีย์ให้ครบ' });
+    }
+    if (ship_zipcode && String(ship_zipcode).length !== 5) {
+      return res.status(400).json({ message: 'รหัสไปรษณีย์ต้อง 5 หลัก' });
+    }
+
     // -------- สรุปยอด --------
     const subtotal = toNum(summary?.subtotal);
     const discount = toNum(summary?.discount);
@@ -972,9 +958,9 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
     // -------- เริ่มทรานแซกชัน --------
     await client.query('BEGIN');
 
-    // 1) ล็อกสต๊อก & ตรวจพอหรือไม่ (SELECT ... FOR UPDATE)
-    const shortages = []; // [{type, id, need, have}]
-    const lockedRows = []; // เก็บข้อมูลไว้ใช้ตอนอัปเดต
+    // 1) ล็อกสต๊อก & ตรวจพอหรือไม่
+    const shortages = [];
+    const lockedRows = [];
 
     for (const it of items) {
       const type = getType(it);
@@ -991,62 +977,43 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
           'SELECT rabbit_id, stock, status FROM rabbits WHERE rabbit_id = $1 FOR UPDATE',
           [baseId]
         );
-        if (q.rowCount === 0) {
-          shortages.push({ type, id: baseId, need, have: 0 });
-          continue;
-        }
-        const row = q.rows[0];
-        const have = Number(row.stock || 0);
-        if (have < need) {
-          shortages.push({ type, id: baseId, need, have });
-          continue;
-        }
+        if (q.rowCount === 0) { shortages.push({ type, id: baseId, need, have: 0 }); continue; }
+        const have = Number(q.rows[0].stock || 0);
+        if (have < need) { shortages.push({ type, id: baseId, need, have }); continue; }
         lockedRows.push({ type, id: baseId, have, need });
       } else {
-        // product: pet-food / equipment
         const q = await client.query(
           'SELECT product_id, stock, status FROM products WHERE product_id = $1 FOR UPDATE',
           [baseId]
         );
-        if (q.rowCount === 0) {
-          shortages.push({ type, id: baseId, need, have: 0 });
-          continue;
-        }
-        const row = q.rows[0];
-        const have = Number(row.stock || 0);
-        if (have < need) {
-          shortages.push({ type, id: baseId, need, have });
-          continue;
-        }
+        if (q.rowCount === 0) { shortages.push({ type, id: baseId, need, have: 0 }); continue; }
+        const have = Number(q.rows[0].stock || 0);
+        if (have < need) { shortages.push({ type, id: baseId, need, have }); continue; }
         lockedRows.push({ type, id: baseId, have, need });
       }
     }
 
     if (shortages.length > 0) {
-      // มีของไม่พอ -> ยกเลิกทรานแซกชัน
       await client.query('ROLLBACK');
-      return res.status(409).json({
-        message: 'จำนวนสินค้าไม่พอ',
-        shortages, // บอกตัวไหนขาด/เหลือเท่าไหร่
-      });
+      return res.status(409).json({ message: 'จำนวนสินค้าไม่พอ', shortages });
     }
 
-    // 2) บันทึกหัวออเดอร์
+    // 2) บันทึกหัวออเดอร์ (ไม่มี shipping_address แล้ว)
     const insertOrderSql = `
       INSERT INTO orders (
         buyer_id, order_date,
         total_amount, status,
         contact_full_name, contact_phone,
-        shipping_method, shipping_address, shipping_fee,
+        shipping_method, ship_detail, ship_subdistrict, ship_district, ship_province, ship_zipcode, shipping_fee,
         payment_method, payment_status, payment_slip_path,
         note, subtotal, discount, currency
       ) VALUES (
         $1, NOW(),
         $2, 'pending',
         $3, $4,
-        $5, $6, $7,
-        $8, $9, $10,
-        $11, $12, $13, $14
+        $5, $6, $7, $8, $9, $10, $11,
+        $12, $13, $14,
+        $15, $16, $17, $18
       )
       RETURNING order_id
     `;
@@ -1056,7 +1023,11 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
       contact.full_name,
       contact.phone,
       shipping.method,
-      shipping.address ? JSON.stringify(shipping.address) : null,
+      ship_detail,
+      ship_subdistrict,
+      ship_district,
+      ship_province,
+      ship_zipcode,
       shippingFee,
       payment.method,
       paymentStatus,
@@ -1081,16 +1052,8 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
       const qty = getQty(it);
       const price = getUnitPrice(it);
 
-      // insert detail
-      await client.query(insertDetailSql, [
-        orderId,
-        type,
-        baseId,
-        qty,
-        price,
-      ]);
+      await client.query(insertDetailSql, [orderId, type, baseId, qty, price]);
 
-      // deduct stock (อัปเดตในตารางที่ถูกต้อง)
       if (type === 'rabbit') {
         await client.query(
           `UPDATE rabbits
@@ -1120,6 +1083,7 @@ app.post('/api/orders', uploadSlip.single('slip'), async (req, res) => {
     client.release();
   }
 });
+
 /* ========= My Orders (รวมสินค้าทั้งหมด) ========= */
 app.get('/api/my-orders', async (req, res) => {
   try {
@@ -1176,35 +1140,66 @@ app.get('/api/my-orders', async (req, res) => {
 app.get('/api/orders/:id', async (req, res) => {
   try {
     const id = Number(req.params.id);
-    if (!Number.isFinite(id)) return res.status(400).json({ message: 'invalid id' });
+    if (!Number.isFinite(id)) {
+      return res.status(400).json({ message: 'invalid id' });
+    }
 
     const head = await pool.query(
-  `SELECT
-     o.order_id, o.order_code, o.buyer_id, o.order_date, o.total_amount, o.currency,
-     o.status, o.payment_status, o.payment_method,
-     o.contact_full_name, o.contact_phone,
-     o.shipping_method, o.shipping_address, o.shipping_fee,
-     o.subtotal, o.discount, o.note,
-     o.carrier, o.tracking_code, o.tracking_updated_at,
-     u.email AS buyer_email   -- ✅ เพิ่มตรงนี้
-   FROM orders o
-   JOIN users u ON u.user_id = o.buyer_id
-   WHERE o.order_id = $1`,
-  [id]
-);
+      `SELECT
+         o.order_id,
+         o.order_code,
+         o.buyer_id,
+         o.order_date,
+         o.total_amount,
+         o.currency,
+         o.status,
+         o.payment_status,
+         o.payment_method,
+         o.contact_full_name,
+         o.contact_phone,
+         o.shipping_method,
+         o.shipping_fee,
+         o.subtotal,
+         o.discount,
+         o.note,
+         o.carrier,
+         o.tracking_code,
+         o.tracking_updated_at,
+         -- ✅ ที่อยู่แยกคอลัมน์
+         o.ship_detail,
+         o.ship_subdistrict,
+         o.ship_district,
+         o.ship_province,
+         o.ship_zipcode,
+         u.email AS buyer_email
+       FROM orders o
+       LEFT JOIN users u ON u.user_id = o.buyer_id
+       WHERE o.order_id = $1`,
+      [id]
+    );
 
-    if (!head.rowCount) return res.status(404).json({ message: 'not found' });
+    if (!head.rowCount) {
+      return res.status(404).json({ message: 'not found' });
+    }
 
     const items = await pool.query(
-      `SELECT od.order_detail_id, od.item_type, od.item_id, od.quantity, od.price,
-              (od.quantity*od.price) AS line_total
+      `SELECT
+         od.order_detail_id,
+         od.item_type,
+         od.item_id,
+         od.quantity,
+         od.price,
+         (od.quantity * od.price) AS line_total
        FROM order_details od
-       WHERE od.order_id=$1
+       WHERE od.order_id = $1
        ORDER BY od.order_detail_id ASC`,
       [id]
     );
 
-    res.json({ order: head.rows[0], items: items.rows });
+    res.json({
+      order: head.rows[0],
+      items: items.rows,
+    });
   } catch (err) {
     console.error('order detail error:', err);
     res.status(500).json({ message: 'server error' });

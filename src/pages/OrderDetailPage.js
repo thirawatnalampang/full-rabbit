@@ -6,7 +6,6 @@ const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000";
 const thb = (n) =>
   new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" }).format(Number(n || 0));
 
-/* ---------- แปลชื่อไทย ---------- */
 const STATUS_TH = {
   pending: "รอดำเนินการ",
   ready_to_ship: "รอจัดส่ง",
@@ -24,7 +23,6 @@ const METHOD_TH = { cod: "เก็บเงินปลายทาง", bank_t
 const ITEM_TYPE_TH = { rabbit: "กระต่าย", "pet-food": "อาหารสัตว์", equipment: "อุปกรณ์" };
 const SHIPPING_TH = { standard: "จัดส่งปกติ", express: "จัดส่งด่วน", pickup: "รับที่ร้าน" };
 
-/* ---------- Tracking helpers ---------- */
 const trackingUrl = (carrier, code) => {
   if (!code) return null;
   const c = String(carrier || "").toLowerCase();
@@ -57,13 +55,11 @@ function TrackingBadge({ carrier, code, updatedAt }) {
   );
 }
 
-/* ---------- ช่วยฟอร์แมตที่อยู่ ---------- */
-// บรรทัดที่ 46:
-/* ---------- ช่วยฟอร์แมตที่อยู่ ---------- */
+/* ---------- ฟอร์แมตที่อยู่ ---------- */
 function formatAddress(a) {
   if (!a) return "";
   if (typeof a === "string") {
-    const parts = a.split('|').map(p => p.trim());
+    const parts = a.split("|").map(p => p.trim());
     const detail = parts[0] || "";
     const tambon = parts[1] || "";
     const amphoe = parts[2] || "";
@@ -74,11 +70,37 @@ function formatAddress(a) {
     const line3 = zipcode;
     return [line1, line2, line3].filter(Boolean).join("\n");
   }
-  // ถ้าเป็น Object
   const line1 = a.detail || "";
   const line2 = [a.tambon, a.amphoe, a.province].filter(Boolean).join(" ");
   const line3 = a.zipcode || "";
   return [line1, line2, line3].filter(Boolean).join("\n");
+}
+
+/* ---------- ดึงที่อยู่จาก order (รองรับทั้งรูปแบบเก่า/ใหม่) ---------- */
+function getShippingAddress(order) {
+  // หากเป็น pickup ก็ไม่ต้องแสดงที่อยู่
+  if (order?.shipping_method === "pickup") return null;
+
+  // 1) ถ้ายังมี shipping_address (string หรือ json) ใช้อันนี้ก่อน
+  let addr = order?.shipping_address;
+  if (addr) {
+    if (typeof addr === "string") {
+      try { addr = JSON.parse(addr); } catch { /* keep string */ }
+    }
+    if (addr && (typeof addr === "string" || typeof addr === "object")) return addr;
+  }
+
+  // 2) ถ้าไม่มี ให้ประกอบจากคอลัมน์ที่แยก (ship_*)
+  const obj = {
+    detail: order?.ship_detail || "",
+    tambon: order?.ship_subdistrict || "",
+    amphoe: order?.ship_district || "",
+    province: order?.ship_province || "",
+    zipcode: order?.ship_zipcode || "",
+  };
+
+  // ถ้าไม่มีอะไรเลย ให้คืน null
+  return Object.values(obj).some(Boolean) ? obj : null;
 }
 
 export default function OrderDetailPage() {
@@ -104,24 +126,13 @@ export default function OrderDetailPage() {
 
   const { order, items } = data;
 
-  // address บางทีเก็บเป็น string → ลอง parse
-  let addr = order.shipping_address || {};
-  if (typeof addr === "string") {
-    try {
-      addr = JSON.parse(addr);
-    } catch {
-      // keep as string
-    }
-  }
-
-  // เลขพัสดุ
+  const addressForShow = getShippingAddress(order);
   const trackingCarrier = order.carrier || "";
   const trackingCode = order.tracking_code || order.tracking_number || "";
   const trackingUpdatedAt = order.tracking_updated_at || null;
 
   return (
     <div className="max-w-4xl mx-auto px-4 md:px-6 py-8">
-      {/* breadcrumbs */}
       <div className="text-sm text-neutral-500 mb-2">
         <Link to="/" className="hover:underline">หน้าแรก</Link> <span className="mx-1">/</span>
         <Link to="/my-orders" className="hover:underline">คำสั่งซื้อของฉัน</Link> <span className="mx-1">/</span>
@@ -131,7 +142,6 @@ export default function OrderDetailPage() {
       <h1 className="text-2xl font-extrabold mb-4">คำสั่งซื้อ #{order.order_id}</h1>
 
       <div className="grid md:grid-cols-2 gap-4">
-        {/* กล่องสถานะ */}
         <div className="bg-white border rounded-2xl p-4">
           <div className="font-semibold mb-2">สถานะ</div>
 
@@ -170,33 +180,31 @@ export default function OrderDetailPage() {
           </div>
         </div>
 
-        {/* กล่องผู้รับ & การจัดส่ง */}
         <div className="bg-white border rounded-2xl p-4">
           <div className="font-semibold mb-2">ผู้รับ & การจัดส่ง</div>
 
-          {/* ชื่อ + เบอร์ */}
           <div className="text-sm">
             {order.contact_full_name} • {order.contact_phone}
           </div>
 
-          {/* วิธีส่ง */}
           <div className="text-sm mt-1">
             วิธีส่ง: {SHIPPING_TH[order.shipping_method] || order.shipping_method || "-"}
           </div>
 
-          {/* ที่อยู่ (ถ้าไม่ใช่ pickup) */}
-          {order.shipping_method !== "pickup" && order.shipping_address ? (
-            <div className="mt-2">
-              <div className="text-sm font-semibold mb-1">ที่อยู่</div>
-              <div className="text-sm whitespace-pre-line">
-                {formatAddress(addr)}
-              </div>
-            </div>
-          ) : null}
+         {addressForShow ? (
+  <div className="mt-2">
+    <div className="text-sm font-semibold mb-1">ที่อยู่</div>
+    <div
+      className="text-sm truncate"                              // บรรทัดเดียว + …
+      title={formatAddress(addressForShow, { inline: true })}    // โชว์เต็มเมื่อโฮเวอร์
+    >
+      {formatAddress(addressForShow, { inline: true })}
+    </div>
+  </div>
+) : null}
         </div>
       </div>
 
-      {/* รายการสินค้า + ยอดรวม */}
       <div className="bg-white border rounded-2xl p-4 mt-4">
         <div className="font-semibold mb-3">รายการสินค้า</div>
 

@@ -47,6 +47,36 @@ const trackingUrl = (carrier, code) => {
   if (c.includes("flash")) return `https://www.flashexpress.com/fle/tracking?se=${q}`;
   return `https://www.google.com/search?q=${encodeURIComponent(`${carrier || ""} ${code}`)}`;
 };
+// 🧩 รวมที่อยู่จากออเดอร์ (รองรับทั้งฟอร์แมตใหม่/เก่า)
+function buildAddressFromOrder(o) {
+  // ฟอร์แมตใหม่: มีคอลัมน์ ship_*
+  if (
+    o.ship_detail || o.ship_subdistrict || o.ship_district ||
+    o.ship_province || o.ship_zipcode
+  ) {
+    return {
+      detail:   o.ship_detail       || "",
+      tambon:   o.ship_subdistrict  || "",
+      amphoe:   o.ship_district     || "",
+      province: o.ship_province     || "",
+      zipcode:  o.ship_zipcode      || "",
+    };
+  }
+
+  // ฟอร์แมตเก่า: มี field shipping_address (string/object)
+  const a = o.shipping_address;
+  if (!a) return "";
+  if (typeof a === "string") return a;
+
+  // object เก่า (กันชื่อคีย์หลากหลาย)
+  return {
+    detail:   a.detail      || a.ship_detail      || "",
+    tambon:   a.tambon      || a.subdistrict      || a.ship_subdistrict || "",
+    amphoe:   a.amphoe      || a.district         || a.ship_district    || "",
+    province: a.province    || a.ship_province    || "",
+    zipcode:  a.zipcode     || a.zip              || a.ship_zipcode     || "",
+  };
+}
 
 // บรรทัดที่ 46:
 /* ---------- ช่วยฟอร์แมตที่อยู่ ---------- */
@@ -151,9 +181,9 @@ export default function ManageOrdersPage() {
 <div className="text-sm text-gray-700">
   🚚 วิธีส่ง: {SHIPPING_LABELS[o.shipping_method] || o.shipping_method || "-"}
 </div>
-{o.shipping_method !== "pickup" && o.shipping_address && (
-  <div className="text-sm text-gray-600 whitespace-pre-line mt-1">
-    📍 {formatAddress(o.shipping_address)}
+{o.shipping_method !== "pickup" && (
+  <div className="text-sm text-gray-600 mt-1 truncate">
+    📍 {formatAddress(buildAddressFromOrder(o), { inline: true })}
   </div>
 )}
 

@@ -16,6 +16,13 @@ const API_BASE = process.env.REACT_APP_API_BASE || "http://localhost:3000";
 const FALLBACK_IMG = "https://placehold.co/200x200?text=No+Image";
 const THB = (n) =>
   new Intl.NumberFormat("th-TH", { style: "currency", currency: "THB" }).format(Number(n || 0));
+const STATUS_TH = {
+  pending: "รอดำเนินการ",
+  ready_to_ship: "รอจัดส่ง",
+  shipped: "จัดส่งแล้ว",
+  done: "สำเร็จ",
+  cancelled: "ยกเลิก",
+};
 
 function Img({ src, alt, className }) {
   const [err, setErr] = useState(false);
@@ -227,13 +234,10 @@ export default function Statistics() {
                       {o.order_date ? new Date(o.order_date).toLocaleString("th-TH") : "—"}
                     </td>
                     <td className="py-2 pr-4">
-                      <span className="px-2 py-1 rounded bg-gray-100">
-                        {o.status === "done" ? "สำเร็จ" :
-                         o.status === "shipped" ? "ส่งแล้ว" :
-                         o.status === "ready_to_ship" ? "รอจัดส่ง" :
-                         o.status === "cancelled" ? "ยกเลิก" : (o.status || "—")}
-                      </span>
-                    </td>
+  <span className="px-2 py-1 rounded bg-gray-100">
+    {STATUS_TH[o.status] ?? "—"}
+  </span>
+</td>
                     <td className="py-2 pr-4 text-right">{THB(o.total_amount)}</td>
                   </tr>
                 );

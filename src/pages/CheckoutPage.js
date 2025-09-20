@@ -50,28 +50,34 @@ const parseAddressString = (addrStr = "") => {
   const p = String(addrStr).split("|").map(s => s.trim());
   return { detail: p[0]||"", tambon: p[1]||"", amphoe: p[2]||"", province: p[3]||"", zipcode: p[4]||"" };
 };
-const composeAddressString = ({ detail, tambon, amphoe, province, zipcode }) =>
-  [detail||"", tambon||"", amphoe||"", province||"", zipcode||""].join("|");
 
-// --- normalize helpers (กันเคส "จังหวัด/อำเภอ/ตำบล/แขวง/เขต" และเว้นวรรค) ---
+// normalize helpers เหมือนเดิม...
 const clean = (s="") => String(s).trim().replace(/\s+/g, " ");
 const norm  = (s="") => clean(s).toLowerCase();
-const normalizeProvince = (p="") => clean(p).replace(/^จังหวัด\s*/,'');
-const normalizeAmphoe   = (a="") => clean(a).replace(/^(อำเภอ|อําเภอ|เขต)\s*/,'');
-const normalizeTambon   = (t="") => clean(t).replace(/^(ตำบล|แขวง)\s*/,'');
+const normalizeProvince = (p="") => clean(p).replace(/^จังหวัด\s*/, '');
+const normalizeAmphoe   = (a="") => clean(a).replace(/^(อำเภอ|อําเภอ|เขต)\s*/, '');
+const normalizeTambon   = (t="") => clean(t).replace(/^(ตำบล|แขวง)\s*/, '');
 
-/** รวมค่าที่อยู่และชื่อจากโปรไฟล์ (เผื่อ key ต่างกัน) */
+/** รวมค่าที่อยู่จากโปรไฟล์ (ยกเว้นชื่อ) */
 const prefillFromProfile = (profile) => {
   const p = profile || {};
-  const parsed = parseAddressString(p.address || "");
+  // ถ้ามีคอลัมน์ใหม่ ใช้ก่อน; ไม่งั้นแยกจาก address เดิม
+  const haveNewCols = p.province || p.district || p.subdistrict || p.zipcode;
+  const parsed = haveNewCols
+    ? { detail: parseAddressString(p.address || "").detail || "",
+        province: p.province || "",
+        amphoe: p.district || "",
+        tambon: p.subdistrict || "",
+        zipcode: p.zipcode || "" }
+    : parseAddressString(p.address || "");
+
   return {
-    // ไม่คืน fullName เพื่อให้ผู้ใช้กรอกเอง
     phone: p.phone || p.tel || "",
     detail: parsed.detail || p.detail || "",
-    province: parsed.province || p.province || "",
-    amphoe: parsed.amphoe || p.amphoe || p.district || "",
-    tambon: parsed.tambon || p.tambon || p.subdistrict || "",
-    zipcode: parsed.zipcode || p.zipcode || p.postcode || "",
+    province: parsed.province || "",
+    amphoe: parsed.amphoe || "",
+    tambon: parsed.tambon || "",
+    zipcode: parsed.zipcode || "",
   };
 };
 
@@ -127,102 +133,62 @@ export default function CheckoutPage() {
       }
     })();
   }, []);
+ // ⬇️ แทนที่ useEffect พรีฟิลเดิมทั้งหมดด้วยอันนี้
+const [prefilledOnce, setPrefilledOnce] = useState(false);
 
-  // Prefill จากโปรไฟล์ — ไม่ดึงชื่อ, แต่ดึงเบอร์/ที่อยู่ + normalize
-  useEffect(() => {
-    if (!user) return;
-    const u = user.profile || user;
-    const pf = prefillFromProfile(u);
-
-    setForm(s => ({
-      ...s,
-      fullName: s.fullName || "",               // คงว่างไว้ให้ผู้ใช้กรอก
-      phone: s.phone || pf.phone,
-      detail: s.detail || pf.detail,
-    }));
-
-    // เก็บ dropdown จากโปรไฟล์ (normalize)
-    setProvince(normalizeProvince(pf.province || ""));
-    setAmphoe(normalizeAmphoe(pf.amphoe || ""));
-    setTambon(normalizeTambon(pf.tambon || ""));
-    setZipcode(pf.zipcode || "");
-  }, [user]);
-
-  // เมื่อ addrData พร้อม หรือเมื่อ province/amphoe/tambon อัปเดต → apply รายการให้ถูกต้อง
-  useEffect(() => {
-    if (!addrReady) return;
-
-    // province -> fill amphoe list (เทียบแบบ normalize)
-    const p = addrData.find(x => norm(x.province) === norm(province));
-    const newAmphoes = p ? p.amphoes.map(a => a.amphoe) : [];
-    setAmphoeList(newAmphoes);
-
-    // ถ้า amphoe ปัจจุบันยังอยู่ในจังหวัดนี้ คงไว้ ไม่งั้นล้าง
-    setAmphoe(prev =>
-      p && p.amphoes.some(a => norm(a.amphoe) === norm(prev)) ? prev : ""
-    );
-
-    // ตามด้วย tambon list ของ amphoe ล่าสุด
-    const aName = p && p.amphoes.some(a => norm(a.amphoe) === norm(amphoe)) ? amphoe : "";
-    const a = p?.amphoes.find(y => norm(y.amphoe) === norm(aName));
-    const newTambons = a ? a.tambons.map(t => t.tambon) : [];
-    setTambonList(newTambons);
-
-    // ถ้า tambon ปัจจุบันยังอยู่ในอำเภอนี้ คงไว้ ไม่งั้นล้าง
-    setTambon(prev =>
-      a && a.tambons.some(t => norm(t.tambon) === norm(prev)) ? prev : ""
-    );
-
-    // ตั้ง zipcode ตามตำบลล่าสุด (ถ้าตรง)
-    const t = a?.tambons.find(z => norm(z.tambon) === (a && a.tambons.some(tt => norm(tt.tambon) === norm(tambon)) ? norm(tambon) : "__none__"));
-    setZipcode(t?.zipcode || "");
-  }, [addrReady, addrData, province, amphoe, tambon]);
-
- // effect เปลี่ยนจังหวัด
 useEffect(() => {
+  if (!user || prefilledOnce || !addrReady) return;
+
+  (async () => {
+    // 1) ดึงโปรไฟล์ล่าสุดจาก DB (ถ้าทำได้)
+    let profileLike = user.profile || user;
+    try {
+      const uid = user?.user_id || user?.id;
+      if (uid) {
+        const r = await fetch(`${API_BASE}/api/users/${uid}`);
+        if (r.ok) profileLike = await r.json();
+      }
+    } catch (_) {}
+
+    // 2) ดึงค่าจากโปรไฟล์ (รองรับคอลัมน์ใหม่: province/district/subdistrict/zipcode)
+    const pf = prefillFromProfile(profileLike);
+
+    // 3) หา “ค่าจริงใน dataset” เพื่อให้ตรงกับ option
+    const wantProv = normalizeProvince(pf.province || "");
+    const wantAmp  = normalizeAmphoe(pf.amphoe || "");
+    const wantTam  = normalizeTambon(pf.tambon || "");
+
+    const provObj = addrData.find(p => norm(p.province) === norm(wantProv)) || null;
+    const ampObj  = provObj?.amphoes.find(a => norm(a.amphoe) === norm(wantAmp)) || null;
+    const tamObj  = ampObj?.tambons.find(t => norm(t.tambon) === norm(wantTam)) || null;
+
+    // 4) เติมฟอร์ม (ไม่แตะชื่อผู้รับ)
+    setForm(s => ({ ...s, phone: s.phone || pf.phone, detail: s.detail || pf.detail }));
+
+    setProvince(provObj?.province || "");
+    setAmphoe(ampObj?.amphoe || "");
+    setTambon(tamObj?.tambon || "");
+    setZipcode(tamObj?.zipcode || pf.zipcode || "");
+
+    setPrefilledOnce(true);
+  })();
+}, [user, prefilledOnce, addrReady, addrData]);
+  useEffect(() => {
   if (!addrReady) return;
+
   const p = addrData.find(x => norm(x.province) === norm(province));
-  setAmphoeList(p ? p.amphoes.map(a => a.amphoe) : []);
+  const newAmphoes = p ? p.amphoes.map(a => a.amphoe) : [];
+  setAmphoeList(newAmphoes);
   setAmphoe(prev => (p && p.amphoes.some(a => norm(a.amphoe) === norm(prev)) ? prev : ""));
 
   const a = p?.amphoes.find(y => norm(y.amphoe) === norm(amphoe));
-  setTambonList(a ? a.tambons.map(t => t.tambon) : []);
+  const newTambons = a ? a.tambons.map(t => t.tambon) : [];
+  setTambonList(newTambons);
+  setTambon(prev => (a && a.tambons.some(t => norm(t.tambon) === norm(prev)) ? prev : ""));
 
-  const keepTambon = a && a.tambons.some(t => norm(t.tambon) === norm(tambon));
-  if (!keepTambon) {
-    setTambon("");
-    setZipcode("");
-  } else {
-    const t = a.tambons.find(z => norm(z.tambon) === norm(tambon));
-    setZipcode(t?.zipcode || "");
-  }
-}, [province, amphoe, tambon, addrReady, addrData]);
-
-// effect เปลี่ยนอำเภอ
-useEffect(() => {
-  if (!addrReady) return;
-  const p = addrData.find(x => norm(x.province) === norm(province));
-  const a = p?.amphoes.find(y => norm(y.amphoe) === norm(amphoe));
-  setTambonList(a ? a.tambons.map(t => t.tambon) : []);
-
-  const keepTambon = a && a.tambons.some(t => norm(t.tambon) === norm(tambon));
-  if (!keepTambon) {
-    setTambon("");
-    setZipcode("");
-  } else {
-    const t = a.tambons.find(z => norm(z.tambon) === norm(tambon));
-    setZipcode(t?.zipcode || "");
-  }
-}, [amphoe, tambon, addrReady, addrData, province]);
-
-// effect ตั้ง zipcode เมื่อเลือกตำบล
-useEffect(() => {
-  if (!addrReady) return;
-  const p = addrData.find(x => norm(x.province) === norm(province));
-  const a = p?.amphoes.find(y => norm(y.amphoe) === norm(amphoe));
   const t = a?.tambons.find(z => norm(z.tambon) === norm(tambon));
   setZipcode(t?.zipcode || "");
-}, [tambon, province, amphoe, addrReady, addrData]);
+}, [addrReady, addrData, province, amphoe, tambon]);
   // slip upload
   const [slipFile, setSlipFile] = useState(null);
   const [slipPreview, setSlipPreview] = useState("");
@@ -260,7 +226,7 @@ useEffect(() => {
     }
     setPlacing(true);
     try {
-      const addressString = composeAddressString({ detail: form.detail, tambon, amphoe, province, zipcode });
+      
 
       const payload = {
         user_id: user?.id ?? user?.user_id ?? null,
@@ -268,8 +234,8 @@ useEffect(() => {
         shipping: {
           method: form.shippingMethod,
           address: form.shippingMethod === "pickup" ? null : {
-            detail: form.detail, province, amphoe, tambon, zipcode,
-            address_string: addressString
+            detail: form.detail, province, amphoe, tambon, zipcode
+            
           },
           fee: shippingFee,
         },
